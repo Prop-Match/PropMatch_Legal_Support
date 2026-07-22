@@ -1,0 +1,74 @@
+[
+  {
+    "file": "01_civil_law_131_1948.txt",
+    "title": "القانون المدني المصري رقم 131 لسنة 1948",
+    "source": "https://manshurat.org/sites/default/files/law-131-1948.pdf",
+    "method": "PDF text extraction",
+    "bytes": 488770,
+    "sha256": "b8ebc91164cc21e3b14af8370f617ebd89fd10191c8cacd8be2aa6bc386beb2b"
+  },
+  {
+    "file": "02_building_law_119_2008.txt",
+    "title": "قانون البناء الموحد رقم 119 لسنة 2008",
+    "source": "https://manshurat.org/node/28798",
+    "method": "OCR from scanned PDF",
+    "bytes": 132839,
+    "sha256": "2979b31c94c0a51f5dd5f598e81777042287493a70808bf15e0700a3dd96a225"
+  },
+  {
+    "file": "03_real_estate_registration_114_1946.txt",
+    "title": "قانون تنظيم الشهر العقاري رقم 114 لسنة 1946",
+    "source": "https://manshurat.org/node/69796",
+    "method": "OCR from scanned PDF",
+    "bytes": 39035,
+    "sha256": "442fbb45a852433584f7b78baeb660f281f91de539beeb3f057c2bb78d48151e"
+  },
+  {
+    "file": "04_building_reconciliation_187_2023.txt",
+    "title": "قانون التصالح في بعض مخالفات البناء رقم 187 لسنة 2023",
+    "source": "https://img.mhuc.gov.eg/images/beda3fc9-a5c1-4396-845e-5920334d6b54.pdf",
+    "method": "Official PDF text extraction",
+    "bytes": 33724,
+    "sha256": "1cffb53e1c47634b35fcbc8d450b10b42357931113dcb3317b8de30752adaf97"
+  },
+  {
+    "file": "05_property_tax_196_2008.txt",
+    "title": "قانون الضريبة على العقارات المبنية رقم 196 لسنة 2008",
+    "source": "https://manshurat.org/node/29334",
+    "method": "OCR from scanned PDF",
+    "bytes": 39111,
+    "sha256": "f3ce49f28202a6e5ce2085809be68cd6a3b8100afee1cfa330ff1390ad744807"
+  },
+  {
+    "file": "06_rent_law_49_1977.txt",
+    "title": "قانون تأجير وبيع الأماكن رقم 49 لسنة 1977",
+    "source": "https://manshurat.org/node/250",
+    "method": "OCR from scanned PDF",
+    "bytes": 83929,
+    "sha256": "3ffec4899fddb719acde8399947a843cb41e017f172f9f5cae590b4faa4ba63c"
+  },
+  {
+    "file": "07_rent_law_136_1981.txt",
+    "title": "قانون رقم 136 لسنة 1981 بشأن بعض الأحكام الخاصة بتأجير وبيع الأماكن",
+    "source": "https://manshurat.org/node/255",
+    "method": "OCR from scanned PDF",
+    "bytes": 28360,
+    "sha256": "003a9cde5d1a4b0f3eb6d4665e57d851409721b5ba62655fb82b7f5eb35983ed"
+  },
+  {
+    "file": "08_rent_law_4_1996.txt",
+    "title": "قانون رقم 4 لسنة 1996 بشأن سريان أحكام القانون المدني على بعض الأماكن",
+    "source": "https://manshurat.org/node/596",
+    "method": "OCR from scanned PDF",
+    "bytes": 2605,
+    "sha256": "ea9ea56453ce2dac0ea7d04b8f6677f2954286550a7466e4d7a92dfca6b12bce"
+  },
+  {
+    "file": "09_rent_law_164_2025.txt",
+    "title": "قانون رقم 164 لسنة 2025 بشأن بعض الأحكام المتعلقة بقوانين إيجار الأماكن",
+    "source": "https://gate.ahram.org.eg/media/News/2025/8/4/2025-638899133802121610-212.pdf",
+    "method": "Official Gazette PDF text extraction",
+    "bytes": 17233,
+    "sha256": "f1d4f4c9c0134bbe70d8200d3542eaaf051e7e74999abc2a3491dc084594965f"
+  }
+]
