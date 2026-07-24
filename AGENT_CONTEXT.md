@@ -66,8 +66,9 @@ Mirror `../propmatch_backend/src/properties/services/FormOptimizer.service.ts`:
 - Python 3.12 target.
 - FastAPI + Uvicorn + HTTPX + LangChain + LangChain Chroma.
 - ChromaDB is an external container based on the official image.
-- Embeddings come only from the ITI `/student/embed` API through a custom
-  LangChain `Embeddings` implementation. The model ID is environment-driven;
-  never add PyTorch or a local sentence-transformer path.
+- Embeddings use an environment-selected custom LangChain adapter. ITI
+  `/student/embed` is the default; Cohere Embed v2 is the temporary hosted
+  fallback. A provider/model switch requires a separate Chroma collection and
+  full re-ingestion. Never mix embedding spaces or add a local PyTorch model.
 - External LLM, embedding API calls, and Chroma are mocked in unit tests.
 - Secrets belong only in `.env`; commit `.env.example`, never real keys.

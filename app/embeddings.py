@@ -1,3 +1,6 @@
+import asyncio
+import logging
+import time
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any, Literal
@@ -6,6 +9,8 @@ import httpx
 from langchain_core.embeddings import Embeddings
 
 from app.config import Settings, get_settings
+
+logger = logging.getLogger("propmatch.legal_embeddings")
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -72,8 +77,120 @@ class ItiEmbeddings(Embeddings):
         }
 
 
+class CohereEmbeddings(Embeddings):
+    """LangChain embeddings adapter for Cohere's v2 Embed API."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_sync(texts, "search_document")
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed_sync([text], "search_query")[0]
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self._embed_async(texts, "search_document")
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return (await self._embed_async([text], "search_query"))[0]
+
+    def _embed_sync(
+        self, texts: Sequence[str], input_type: Literal["search_document", "search_query"]
+    ) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        with httpx.Client(timeout=self.settings.embedding_timeout_seconds) as client:
+            for batch in _batches(texts, min(self.settings.embedding_batch_size, 96)):
+                response = self._post_with_retry(client, batch, input_type)
+                vectors.extend(_handle_response(response, len(batch)))
+        return vectors
+
+    async def _embed_async(
+        self, texts: Sequence[str], input_type: Literal["search_document", "search_query"]
+    ) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        async with httpx.AsyncClient(timeout=self.settings.embedding_timeout_seconds) as client:
+            for batch in _batches(texts, min(self.settings.embedding_batch_size, 96)):
+                response = await self._post_with_retry_async(client, batch, input_type)
+                vectors.extend(_handle_response(response, len(batch)))
+        return vectors
+
+    def _post_with_retry(
+        self,
+        client: httpx.Client,
+        texts: Sequence[str],
+        input_type: str,
+    ) -> httpx.Response:
+        for attempt in range(self.settings.cohere_max_retries + 1):
+            response = client.post(
+                self.settings.cohere_api_url,
+                headers=self._headers(),
+                json=self._payload(texts, input_type),
+            )
+            if response.status_code != 429 or attempt == self.settings.cohere_max_retries:
+                return response
+            delay = _retry_after_seconds(response, self.settings.cohere_retry_wait_seconds)
+            logger.warning(
+                "Cohere rate limit reached; retrying in %.1f seconds (%d/%d)",
+                delay,
+                attempt + 1,
+                self.settings.cohere_max_retries,
+            )
+            time.sleep(delay)
+        raise AssertionError("unreachable")
+
+    async def _post_with_retry_async(
+        self,
+        client: httpx.AsyncClient,
+        texts: Sequence[str],
+        input_type: str,
+    ) -> httpx.Response:
+        for attempt in range(self.settings.cohere_max_retries + 1):
+            response = await client.post(
+                self.settings.cohere_api_url,
+                headers=self._headers(),
+                json=self._payload(texts, input_type),
+            )
+            if response.status_code != 429 or attempt == self.settings.cohere_max_retries:
+                return response
+            delay = _retry_after_seconds(response, self.settings.cohere_retry_wait_seconds)
+            logger.warning(
+                "Cohere rate limit reached; retrying in %.1f seconds (%d/%d)",
+                delay,
+                attempt + 1,
+                self.settings.cohere_max_retries,
+            )
+            await asyncio.sleep(delay)
+        raise AssertionError("unreachable")
+
+    def _headers(self) -> dict[str, str]:
+        if not self.settings.cohere_api_key:
+            raise EmbeddingProviderError("COHERE_API_KEY is not configured")
+        return {
+            "Authorization": f"Bearer {self.settings.cohere_api_key}",
+            "Content-Type": "application/json",
+            "X-Client-Name": "PropMatch-Legal-Support",
+        }
+
+    def _payload(self, texts: Sequence[str], input_type: str) -> dict[str, Any]:
+        return {
+            "model": self.settings.cohere_model_id,
+            "texts": list(texts),
+            "input_type": input_type,
+            "embedding_types": ["float"],
+            "output_dimension": self.settings.cohere_output_dimension,
+        }
+
+
 def _batches(texts: Sequence[str], size: int) -> list[list[str]]:
     return [list(texts[start : start + size]) for start in range(0, len(texts), size)]
+
+
+def _retry_after_seconds(response: httpx.Response, fallback: float) -> float:
+    try:
+        return max(float(response.headers["Retry-After"]), 0)
+    except (KeyError, ValueError):
+        return fallback
 
 
 def _handle_response(response: httpx.Response, expected_count: int) -> list[list[float]]:
@@ -99,11 +216,15 @@ def _provider_error_message(response: httpx.Response) -> str:
     details: Any = None
     try:
         payload = response.json()
-        error = payload.get("error", {}) if isinstance(payload, dict) else {}
-        if isinstance(error, dict):
-            code = str(error.get("code") or code)
-            message = str(error.get("message") or message)
-            details = error.get("details")
+        if isinstance(payload, dict):
+            error = payload.get("error", {})
+            if isinstance(error, dict):
+                code = str(error.get("status") or error.get("code") or code)
+                message = str(error.get("message") or payload.get("message") or message)
+                details = error.get("details")
+            else:
+                code = str(payload.get("code") or code)
+                message = str(payload.get("message") or message)
     except ValueError:
         pass
     suffix = f" Details: {details}" if details else ""
@@ -118,7 +239,7 @@ def extract_embeddings(data: Any) -> list[list[float]]:
     if raw is None and isinstance(data.get("data"), list):
         raw = [item.get("embedding") for item in data["data"] if isinstance(item, dict)]
     if isinstance(raw, dict):
-        raw = raw.get("embeddings") or raw.get("vectors")
+        raw = raw.get("float") or raw.get("embeddings") or raw.get("vectors")
     if not isinstance(raw, list):
         raise KeyError("No supported embeddings field found")
     vectors: list[list[float]] = []
@@ -132,6 +253,12 @@ def extract_embeddings(data: Any) -> list[list[float]]:
     return vectors
 
 
+def create_embeddings(settings: Settings) -> Embeddings:
+    if settings.embedding_provider == "cohere":
+        return CohereEmbeddings(settings)
+    return ItiEmbeddings(settings)
+
+
 @lru_cache
-def get_embeddings() -> ItiEmbeddings:
-    return ItiEmbeddings(get_settings())
+def get_embeddings() -> Embeddings:
+    return create_embeddings(get_settings())

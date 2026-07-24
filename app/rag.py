@@ -44,6 +44,29 @@ DOMAIN_TERMS = (
     "محل",
     "أرض",
 )
+REAL_ESTATE_PASSAGE_TERMS = (
+    "إيجار",
+    "ايجار",
+    "المؤجر",
+    "المستأجر",
+    "العين المؤجرة",
+    "الأجرة",
+    "عقار",
+    "الأراضي",
+    "المنازل",
+    "المباني",
+)
+OUT_OF_SCOPE_PASSAGE_TERMS = (
+    "عقد العمل",
+    "رب العمل",
+    "العامل",
+    "ملحقات الأجر",
+    "الأجر المحدد",
+    "الشركة",
+    "الشرآة",
+    "الشركاء",
+    "الشرآاء",
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +84,11 @@ class LegalRagService:
         self.llm = llm
 
     async def answer(self, message: str) -> RagAnswer:
-        passages = await self.store.query(message, self.settings.retrieval_top_k)
+        candidate_count = min(self.settings.retrieval_top_k * 3, 30)
+        candidates = await self.store.query(message, candidate_count)
+        passages = [passage for passage in candidates if self._is_real_estate_passage(passage)][
+            : self.settings.retrieval_top_k
+        ]
         on_topic = self._has_domain_term(message) or self._has_relevant_passage(passages)
         answer_id = f"msg_{uuid.uuid4().hex}"
         if not on_topic:
@@ -83,6 +110,17 @@ class LegalRagService:
 
     def _has_relevant_passage(self, passages: list[RetrievedPassage]) -> bool:
         return bool(passages and passages[0].distance <= self.settings.relevance_max_distance)
+
+    @staticmethod
+    def _is_real_estate_passage(passage: RetrievedPassage) -> bool:
+        normalized = passage.document.casefold()
+        has_real_estate_term = any(
+            term.casefold() in normalized for term in REAL_ESTATE_PASSAGE_TERMS
+        )
+        has_out_of_scope_term = any(
+            term.casefold() in normalized for term in OUT_OF_SCOPE_PASSAGE_TERMS
+        )
+        return has_real_estate_term or not has_out_of_scope_term
 
     @staticmethod
     def _format_context(passages: list[RetrievedPassage]) -> str:

@@ -5,10 +5,11 @@ from typing import Any
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
 from app.chunking import LawChunk
 from app.config import Settings, get_settings
-from app.embeddings import ItiEmbeddings, get_embeddings
+from app.embeddings import get_embeddings
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class RetrievedPassage:
 class LegalVectorStore:
     """LangChain Chroma adapter backed by the external Chroma Docker service."""
 
-    def __init__(self, settings: Settings, embeddings: ItiEmbeddings) -> None:
+    def __init__(self, settings: Settings, embeddings: Embeddings) -> None:
         self.settings = settings
         self.embeddings = embeddings
         self.store = Chroma(

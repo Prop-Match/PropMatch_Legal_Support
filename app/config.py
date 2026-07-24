@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -32,11 +32,18 @@ class Settings(BaseSettings):
     chroma_ssl: bool = False
     chroma_collection: str = "egypt_real_estate_laws"
 
+    embedding_provider: Literal["iti", "cohere"] = "iti"
     embedding_api_url: str = "http://apiaccess.iti.net.eg/api/v1/student/embed"
     embedding_api_key: str = Field(default="", repr=False)
     embedding_model_id: str = "amazon.titan-embed-text-v2:0:8k"
     embedding_batch_size: int = Field(default=32, ge=1, le=256)
     embedding_timeout_seconds: float = Field(default=60, gt=0)
+    cohere_api_url: str = "https://api.cohere.com/v2/embed"
+    cohere_api_key: str = Field(default="", repr=False)
+    cohere_model_id: str = "embed-v4.0"
+    cohere_output_dimension: int = 1024
+    cohere_max_retries: int = Field(default=6, ge=0, le=20)
+    cohere_retry_wait_seconds: float = Field(default=60, gt=0)
 
     laws_dir: Path = Path("laws/egypt_real_estate_laws_txt_for_rag")
     chunk_size: int = Field(default=1400, ge=300, le=5000)
@@ -49,6 +56,13 @@ class Settings(BaseSettings):
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("cohere_output_dimension")
+    @classmethod
+    def validate_cohere_output_dimension(cls, value: int) -> int:
+        if value not in {256, 512, 1024, 1536}:
+            raise ValueError("must be one of 256, 512, 1024, or 1536")
         return value
 
     def validate_runtime_secrets(self) -> None:

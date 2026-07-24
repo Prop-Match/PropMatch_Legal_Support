@@ -32,9 +32,10 @@ LLM API pattern already used by the NestJS `FormOptimizerService`.
    shared clients.
 2. Corpus ingestion parses law text into article-aware, overlapping chunks and
    stores content plus source metadata in ChromaDB.
-3. A custom LangChain `Embeddings` adapter calls the ITI embedding API with a
-   configurable model ID. Ingestion uses `search_document`; retrieval uses
-   `search_query`. No local PyTorch model is installed.
+3. Environment-selected LangChain `Embeddings` adapters call ITI by default or
+   Cohere Embed v2 as a hosted fallback. Ingestion uses `search_document`;
+   retrieval uses `search_query`. Provider changes require a separate Chroma
+   collection and re-ingestion; no local PyTorch model is installed.
 4. A relevance guard combines explicit domain cues with vector distance. It
    rejects clearly unrelated questions before an LLM call.
 5. LangChain Chroma retrieves top passages and a LangChain chat prompt builds a

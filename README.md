@@ -18,8 +18,8 @@ the NestJS form optimizer.
 - Deterministic chunk IDs and idempotent Chroma `upsert` ingestion.
 - Metadata retention: law title, article/section, filename, source URL,
   extraction method, and sequence.
-- LangChain-based RAG using the external ITI embedding API and LangChain's
-  Chroma integration. No PyTorch or local embedding model is used.
+- LangChain-based RAG using ITI embeddings by default or Cohere Embed v2 as a
+  hosted fallback, with LangChain's Chroma integration. No local model is used.
 - Grounded Arabic prompt that forbids invented legal claims/article numbers.
 - Legal-information disclaimer on every substantive answer.
 - Defensive parsing of every LLM response shape already handled by the NestJS
@@ -39,7 +39,7 @@ LegalChatbot.tsx
   -> Next.js /api/backend/legal-chat/stream (attaches httpOnly JWT)
   -> NestJS /api/legal-chat/stream (validates JWT)
   -> FastAPI /legal-chat/stream (validates internal service key)
-  -> ITI embedding API (`search_query`)
+  -> selected ITI or Cohere embedding API (`search_query`)
   -> LangChain Chroma top-k Egyptian-law passages
   -> LangChain legal prompt -> ITI LLM with retrieved context only
   -> SSE token frames + terminal done frame
@@ -201,22 +201,29 @@ ones are:
 | `JWT_SECRET` | Optional direct-JWT fallback, unused when the internal key is configured |
 | `CHROMA_HOST`, `CHROMA_PORT` | Chroma HTTP server address |
 | `CHROMA_COLLECTION` | Vector collection name |
+| `EMBEDDING_PROVIDER` | `iti` (default) or the hosted `cohere` fallback |
 | `EMBEDDING_API_URL` | ITI `/api/v1/student/embed` endpoint |
 | `EMBEDDING_API_KEY` | Optional separate key; blank reuses `SBG_API_KEY` |
-| `EMBEDDING_MODEL_ID` | Embedding model selected without a code change |
+| `EMBEDDING_MODEL_ID` | ITI embedding model ID |
+| `COHERE_API_KEY` | Cohere trial or production API key |
+| `COHERE_MODEL_ID` | Cohere embedding model; defaults to `embed-v4.0` |
+| `COHERE_OUTPUT_DIMENSION` | Cohere vector size: `256`, `512`, `1024`, or `1536` |
+| `COHERE_MAX_RETRIES` | Maximum retries when Cohere returns HTTP 429 |
+| `COHERE_RETRY_WAIT_SECONDS` | Wait used when a 429 response omits `Retry-After` |
 | `EMBEDDING_BATCH_SIZE` | Maximum texts sent per embedding API request |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Corpus chunking controls |
 | `RETRIEVAL_TOP_K` | Passages supplied to the LLM |
 | `RELEVANCE_MAX_DISTANCE` | Cosine-distance ceiling used by the fallback topic guard |
 
-If `EMBEDDING_MODEL_ID` changes, use a new `CHROMA_COLLECTION` name or delete
-the old collection intentionally before re-ingesting. Models can return
-incompatible vector dimensions. Ingestion sends `input_type=search_document`;
-live questions send `input_type=search_query`, following the provider contract.
+If the embedding provider, model, or output dimension changes, select a new
+`CHROMA_COLLECTION` and re-ingest. Never query a collection with a different
+provider: embedding spaces are incompatible even when their dimensions match.
+Ingestion sends `input_type=search_document`; live questions send
+`input_type=search_query`.
 
 The implementation deliberately contains no PyTorch, sentence-transformers, or
-local fallback embedding path. If the embedding API is unavailable, retrieval
-fails explicitly instead of silently indexing incompatible vectors.
+local embedding path. Provider selection is explicit rather than automatic
+per-request failover, preventing mixed vectors from corrupting retrieval.
 
 ### Embedding-provider troubleshooting
 
@@ -232,6 +239,14 @@ The default is the approved catalog identifier
 configuration problem, not a Chroma connection problem. Ask the ITI API
 administrator to enable a text embedding model in an approved region, then set
 its exact identifier in `EMBEDDING_MODEL_ID` and rerun ingestion.
+
+To use Cohere temporarily, set `EMBEDDING_PROVIDER=cohere`, add
+`COHERE_API_KEY`, choose a fresh collection name such as
+`egypt_real_estate_laws_cohere_v4_1024`, and rerun ingestion. Cohere trial keys
+are appropriate only for development and evaluation, not production use.
+Initial trial-key ingestion can pause for a minute when Cohere's token window
+is exhausted; the adapter retries the same batch and deterministic IDs make
+rerunning ingestion safe.
 
 For local Python plus Dockerized Chroma, `CHROMA_HOST` must be `localhost`.
 Use `chroma` only when the FastAPI process also runs inside Docker Compose.
@@ -270,7 +285,7 @@ enforcement, request validation, and the exact frontend SSE shape.
 - `app/main.py` — FastAPI routes, errors, health, SSE serialization.
 - `app/rag.py` — relevance guard, prompt context, sources, disclaimer.
 - `app/vector_store.py` — LangChain Chroma collection, ingestion, retrieval.
-- `app/embeddings.py` — LangChain adapter for the ITI embedding endpoint.
+- `app/embeddings.py` — selectable ITI and Cohere LangChain adapters.
 - `app/chunking.py` — corpus parser and deterministic chunks.
 - `app/llm.py` — ITI LLM API client.
 - `app/auth.py` — internal service-key verification and optional JWT fallback.
