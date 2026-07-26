@@ -1,3 +1,9 @@
+"""LangChain embedding adapters for the ITI and Cohere HTTP APIs.
+
+Document ingestion uses the provider's document input type; live RAG queries use
+its query input type. A collection must never mix vectors from different models.
+"""
+
 import asyncio
 import logging
 import time
@@ -14,10 +20,14 @@ logger = logging.getLogger("propmatch.legal_embeddings")
 
 
 class EmbeddingProviderError(RuntimeError):
+    """Raised when an embedding provider rejects or malforms a request."""
+
     pass
 
 
 class ItiEmbeddings(Embeddings):
+    """Expose the ITI embedding endpoint through LangChain's Embeddings API."""
+
     """LangChain embeddings adapter for the ITI `/student/embed` API."""
 
     def __init__(self, settings: Settings) -> None:
@@ -78,6 +88,8 @@ class ItiEmbeddings(Embeddings):
 
 
 class CohereEmbeddings(Embeddings):
+    """Expose Cohere Embed v2 with bounded retry handling for rate limits."""
+
     """LangChain embeddings adapter for Cohere's v2 Embed API."""
 
     def __init__(self, settings: Settings) -> None:
@@ -232,7 +244,7 @@ def _provider_error_message(response: httpx.Response) -> str:
 
 
 def extract_embeddings(data: Any) -> list[list[float]]:
-    """Parse common batch shapes while preserving input order."""
+    """Parse common provider batch shapes while preserving input order."""
     if not isinstance(data, dict):
         raise TypeError("Embedding response must be a JSON object")
     raw = data.get("embeddings") or data.get("vectors")
@@ -254,6 +266,8 @@ def extract_embeddings(data: Any) -> list[list[float]]:
 
 
 def create_embeddings(settings: Settings) -> Embeddings:
+    """Select exactly one configured embedding provider for a collection."""
+
     if settings.embedding_provider == "cohere":
         return CohereEmbeddings(settings)
     return ItiEmbeddings(settings)
@@ -261,4 +275,6 @@ def create_embeddings(settings: Settings) -> Embeddings:
 
 @lru_cache
 def get_embeddings() -> Embeddings:
+    """Return the cached provider used by ingestion and retrieval."""
+
     return create_embeddings(get_settings())

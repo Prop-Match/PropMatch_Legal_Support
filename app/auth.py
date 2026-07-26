@@ -1,3 +1,5 @@
+"""Authenticate trusted NestJS calls before an AI endpoint is executed."""
+
 import secrets
 from typing import Annotated, Any
 
@@ -14,6 +16,13 @@ def require_user(
     x_propmatch_user_id: Annotated[str | None, Header()] = None,
     x_propmatch_user_role: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
+    """Resolve user context from an internal key or the optional JWT fallback.
+
+    PropMatch's normal path uses the internal key. NestJS validates the browser
+    JWT first, then sends the authenticated user ID and role in private headers.
+    Direct JWT validation exists only as a fallback when no internal key is set.
+    """
+
     if not settings.auth_required:
         return {"sub": "development", "role": "tenant"}
 
@@ -43,4 +52,5 @@ def require_user(
     return payload
 
 
+# Endpoint parameters typed as CurrentUser automatically run require_user first.
 CurrentUser = Annotated[dict[str, Any], Depends(require_user)]

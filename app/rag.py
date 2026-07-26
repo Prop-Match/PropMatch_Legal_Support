@@ -1,3 +1,10 @@
+"""Grounded legal retrieval and answer orchestration.
+
+This module is the stable legal pipeline used by the legal router: retrieve
+candidate passages, reject unrelated material, build constrained context, call
+the ITI LLM, enforce the disclaimer, and expose source metadata.
+"""
+
 import re
 import uuid
 from dataclasses import dataclass
@@ -71,6 +78,8 @@ OUT_OF_SCOPE_PASSAGE_TERMS = (
 
 @dataclass(frozen=True)
 class RagAnswer:
+    """Internal legal result shared by buffered and streamed endpoints."""
+
     id: str
     content: str
     declined: bool
@@ -78,12 +87,16 @@ class RagAnswer:
 
 
 class LegalRagService:
+    """Coordinate legal relevance checks, Chroma retrieval, and LLM generation."""
+
     def __init__(self, settings: Settings, store: LegalVectorStore, llm: ItiLlmClient) -> None:
         self.settings = settings
         self.store = store
         self.llm = llm
 
     async def answer(self, message: str) -> RagAnswer:
+        """Generate a grounded answer or a safe off-topic/insufficient-context reply."""
+
         candidate_count = min(self.settings.retrieval_top_k * 3, 30)
         candidates = await self.store.query(message, candidate_count)
         passages = [passage for passage in candidates if self._is_real_estate_passage(passage)][
@@ -105,14 +118,20 @@ class LegalRagService:
 
     @staticmethod
     def _has_domain_term(message: str) -> bool:
+        """Recognize explicit Arabic real-estate terminology in the question."""
+
         normalized = message.casefold()
         return any(term.casefold() in normalized for term in DOMAIN_TERMS)
 
     def _has_relevant_passage(self, passages: list[RetrievedPassage]) -> bool:
+        """Use cosine distance as a second signal when keywords are inconclusive."""
+
         return bool(passages and passages[0].distance <= self.settings.relevance_max_distance)
 
     @staticmethod
     def _is_real_estate_passage(passage: RetrievedPassage) -> bool:
+        """Remove obvious cross-domain legal matches before prompting the LLM."""
+
         normalized = passage.document.casefold()
         has_real_estate_term = any(
             term.casefold() in normalized for term in REAL_ESTATE_PASSAGE_TERMS
@@ -124,6 +143,8 @@ class LegalRagService:
 
     @staticmethod
     def _format_context(passages: list[RetrievedPassage]) -> str:
+        """Render retrieved text and provenance into the legal prompt context."""
+
         blocks: list[str] = []
         for index, passage in enumerate(passages, start=1):
             metadata = passage.metadata
@@ -138,10 +159,14 @@ class LegalRagService:
 
 
 def _contains_disclaimer(text: str) -> bool:
+    """Detect whether the provider already included the required disclaimer."""
+
     return bool(re.search(r"(ليست|ليس).{0,30}(استشارة|فتوى).{0,30}(قانونية|ملزمة)", text))
 
 
 def _unique_sources(passages: list[RetrievedPassage]) -> list[Source]:
+    """Deduplicate public source records while preserving retrieval order."""
+
     sources: list[Source] = []
     seen: set[tuple[str, str, str]] = set()
     for passage in passages:
@@ -167,5 +192,7 @@ def _unique_sources(passages: list[RetrievedPassage]) -> list[Source]:
 
 @lru_cache
 def get_rag_service() -> LegalRagService:
+    """Build and cache the legal RAG dependency used by HTTP routes."""
+
     settings = get_settings()
     return LegalRagService(settings, get_vector_store(), ItiLlmClient(settings))

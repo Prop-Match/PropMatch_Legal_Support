@@ -1,160 +1,141 @@
-# PropMatch Legal Support API
+# PropMatch Unified AI Service API
 
-Standalone FastAPI retrieval-augmented generation (RAG) service for the
-PropMatch legal chatbot. It answers Arabic questions about Egyptian rental and
-real-estate law using only the supplied law corpus, retrieves evidence from a
-Dockerized ChromaDB vector store, and calls the same ITI LLM provider used by
-the NestJS form optimizer.
+Standalone FastAPI retrieval-augmented generation (RAG) microservice for the PropMatch platform, hosting both the **Legal Chatbot** and the **Customer Support AI Assistant**.
 
-## What was built
+It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, evaluates multi-factor escalation rules for human support handoff, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider.
 
-- NestJS-compatible `POST /legal-chat/stream` Server-Sent Events endpoint.
-- Buffered `POST /legal-chat` endpoint for non-streaming clients/debugging.
-- Internal service-key authentication with NestJS-provided user context.
-- Strict 1–2000 character request validation and JSON errors before streaming.
-- Arabic legal-domain relevance guard with a graceful off-topic decline.
-- Article-aware, overlapping chunking of all nine files in
-  `laws/egypt_real_estate_laws_txt_for_rag/`.
-- Deterministic chunk IDs and idempotent Chroma `upsert` ingestion.
-- Metadata retention: law title, article/section, filename, source URL,
-  extraction method, and sequence.
-- LangChain-based RAG using ITI embeddings by default or Cohere Embed v2 as a
-  hosted fallback, with LangChain's Chroma integration. No local model is used.
-- Grounded Arabic prompt that forbids invented legal claims/article numbers.
-- Legal-information disclaimer on every substantive answer.
-- Defensive parsing of every LLM response shape already handled by the NestJS
-  optimizer (`output_text`, `reply`, `content`, `choices`, and `message`).
-- Liveness/readiness endpoints, Dockerfile, Docker Compose, automated tests,
-  `.env.example`, `PLAN.md`, and `AGENT_CONTEXT.md`.
-- Authenticated NestJS gateway endpoints that proxy buffered answers and pipe
-  SSE frames without buffering.
+---
 
-Chat content is not persisted. Identity documents and eKYC data are never sent
-to the LLM or vector database.
+## Features & Endpoints
 
-## Request flow
+- **Legal Chat Stream**: `POST /legal-chat/stream` (SSE tokens + legal disclaimer enforcement).
+- **Legal Chat Buffered**: `POST /legal-chat` (buffered JSON answer with cited law sources).
+- **Support Chat Stream**: `POST /support/stream` (under implementation; not production-ready).
+- **Health Probes**: `GET /health/live` and `GET /health/ready`.
+- **Internal Key Security**: Validates `X-Internal-Service-Key` header sent by NestJS BFF.
+- **Dedicated Vector Collections**:
+  - `CHROMA_LEGAL_COLLECTION`: `egypt_real_estate_laws_v1`
+  - `CHROMA_SUPPORT_COLLECTION`: `support_kb_v1`
+
+---
+
+## Architecture Flow
 
 ```text
-LegalChatbot.tsx
-  -> Next.js /api/backend/legal-chat/stream (attaches httpOnly JWT)
-  -> NestJS /api/legal-chat/stream (validates JWT)
-  -> FastAPI /legal-chat/stream (validates internal service key)
-  -> selected ITI or Cohere embedding API (`search_query`)
-  -> LangChain Chroma top-k Egyptian-law passages
-  -> LangChain legal prompt -> ITI LLM with retrieved context only
-  -> SSE token frames + terminal done frame
+UnifiedAiAssistant.tsx (Next.js Frontend)
+  -> /api/backend/support/ai-chat/stream  OR  /api/backend/legal-chat/stream
+  -> NestJS Gateway (Validates JWT Cookie)
+  -> FastAPI /support/stream  OR  /legal-chat/stream (Validates Internal Security Key)
+  -> ITI Embedding API (`amazon.titan-embed-text-v2:0:8k`)
+  -> ChromaDB Top-k Retrieval (`CHROMA_HOST:8000`)
+  -> Grounded ITI LLM Generation (`openai.gpt-oss-120b-1:0`)
+  -> SSE Token Frames + Terminal Done Frame
 ```
 
-The ITI endpoint currently returns a complete answer rather than native token
-events. FastAPI splits that answer at word boundaries to preserve the existing
-frontend's progressive SSE experience, matching the pattern used by the NestJS
-`FormOptimizerService`.
+---
 
-## Prerequisites
+## Endpoint Reference
 
-- Docker Engine with Docker Compose v2, or Python 3.11/3.12 for local running.
-- An ITI student LLM API key (`SBG_API_KEY`).
-- A long random internal service key shared only with `propmatch_backend`.
+Interactive OpenAPI documentation is available at `http://localhost:8001/docs`
+while the service is running. Chat endpoints are internal APIs: the browser calls
+the Next.js BFF, NestJS authenticates the user, and only NestJS calls FastAPI.
 
-## Run with Docker Compose
+### `GET /health/live`
 
-From this directory:
+**Purpose:** Docker/Kubernetes liveness probe. It answers whether the FastAPI
+process is running and able to receive HTTP requests.
 
-```bash
-cp .env.example .env
+**How it works:** It returns immediately and deliberately does not contact
+ChromaDB, the embedding provider, or the LLM provider.
+
+```json
+{
+  "status": "ok",
+  "chroma": "not_checked",
+  "collection_count": null
+}
 ```
 
-Edit `.env` and set at minimum:
+### `GET /health/ready`
 
-```dotenv
-SBG_API_KEY=your-real-key
-INTERNAL_SERVICE_API_KEY=the-same-random-key-used-by-propmatch-backend
+**Purpose:** Readiness probe used before sending chat traffic to the service.
+
+**How it works:** It sends a heartbeat to ChromaDB and counts indexed legal
+chunks. A reachable but empty collection is reported as `degraded`; an
+unreachable ChromaDB instance is reported as `down`.
+
+```json
+{
+  "status": "ok",
+  "chroma": "up",
+  "collection_count": 420
+}
 ```
 
-Start FastAPI and the official `chromadb/chroma` image:
+This endpoint currently checks the legal vector store. It should be extended to
+report legal and support collections separately when support RAG is completed.
 
-```bash
-docker compose up --build -d
+### `POST /legal-chat`
+
+**Purpose:** Return one completed legal RAG answer as JSON. It is useful for
+diagnostics, automated tests, and clients that do not need SSE.
+
+**Authentication headers sent by NestJS:**
+
+```http
+X-Internal-Service-Key: <shared-private-key>
+X-PropMatch-User-Id: <authenticated-user-id>
+X-PropMatch-User-Role: TENANT
+Content-Type: application/json
 ```
 
-Ingest the supplied laws once (and again whenever the corpus, embedding model,
-or chunk settings change):
+**Request:**
 
-```bash
-docker compose run --rm api python -m app.ingest
+```json
+{
+  "message": "ما هي مدة الإخطار قبل إنهاء عقد الإيجار؟"
+}
 ```
 
-Check readiness and open the API docs:
+The message is trimmed and must contain between 1 and 2000 characters.
 
-```bash
-curl http://localhost:8001/health/ready
+**How it works:**
+
+1. `CurrentUser` validates the internal key and NestJS user headers.
+2. `LegalRagService` embeds the question and queries the legal Chroma collection.
+3. Clearly unrelated passages are removed and off-topic questions are declined.
+4. Retrieved passages and their metadata are inserted into the legal prompt.
+5. `ItiLlmClient` calls the configured ITI model.
+6. The required legal-information disclaimer and unique sources are returned.
+
+**Response:**
+
+```json
+{
+  "id": "msg_...",
+  "content": "الإجابة القانونية...",
+  "declined": false,
+  "sources": [
+    {
+      "title": "القانون المدني المصري رقم 131 لسنة 1948",
+      "article": "المادة 563",
+      "file": "01_civil_law_131_1948.txt",
+      "source_url": "https://example.com/source"
+    }
+  ]
+}
 ```
 
-- Swagger UI: <http://localhost:8001/docs>
-- ChromaDB: <http://localhost:8000>
+### `POST /legal-chat/stream`
 
-The expected readiness result after ingestion contains `"status":"ok"` and a
-positive `collection_count`.
+**Purpose:** Production endpoint used by the PropMatch legal-chat frontend.
 
-## Run locally with only Chroma in Docker
+**Request and authentication:** Same as `POST /legal-chat`.
 
-```bash
-cp .env.example .env
-```
-
-The checked-in `.env.example` already uses `CHROMA_HOST=localhost`, which is
-correct when Python runs on the host and only Chroma runs in Docker. Then run:
-
-```bash
-docker compose up -d chroma
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
-python -m app.ingest
-uvicorn app.main:app --reload --port 8001
-```
-
-Do not set `CHROMA_HOST=chroma` for this local-Python workflow: Docker service
-names resolve only between containers on the Compose network. For the full
-Docker workflow, Compose overrides the value to `chroma` automatically.
-
-## Connect NestJS and the frontend
-
-In `../propmatch_backend/.env.development`:
-
-```dotenv
-LEGAL_SUPPORT_API_URL=http://localhost:8001
-LEGAL_SUPPORT_INTERNAL_API_KEY=the-same-random-key-used-by-fastapi
-LEGAL_SUPPORT_TIMEOUT_MS=120000
-```
-
-In `../propmatch_frontend/.env.local`, configure only NestJS:
-
-```dotenv
-NESTJS_API_URL=http://localhost:3001/api
-API_MOCKING=disabled
-```
-
-Restart all services after changing environment variables. The frontend never
-targets FastAPI: its BFF sends the user JWT to NestJS, NestJS authenticates the
-user, and NestJS calls FastAPI using the internal key.
-
-For isolated development without NestJS authentication, set
-`AUTH_REQUIRED=false` in the legal service `.env`. Do not use that setting in a
-shared or production environment.
-
-## API contract
-
-### Streamed answer
-
-```bash
-curl -N http://localhost:3001/api/legal-chat/stream \
-  -H 'Authorization: Bearer YOUR_NESTJS_ACCESS_TOKEN' \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"ما هي مدة الإخطار قبل إنهاء عقد الإيجار؟"}'
-```
-
-Response frames:
+**How it works:** The complete grounded answer is generated first. Because the
+current ITI provider returns a complete answer rather than native model tokens,
+FastAPI divides the answer into progressive SSE fragments. NestJS pipes those
+fragments through the Next.js BFF to `LegalChatbot`.
 
 ```text
 data: {"type":"token","value":"وفقًا "}
@@ -165,129 +146,130 @@ data: {"type":"done","id":"msg_...","declined":false}
 
 ```
 
-For an unrelated question, the service does not call the LLM and responds with
-the scoped Arabic decline. The final frame contains `"declined":true`.
+The terminal `done` frame is sent exactly once. `declined=true` means the legal
+agent rejected an off-topic question without presenting it as legal advice.
 
-### Buffered answer
+### `POST /support/stream` (Under Implementation)
 
-`POST /legal-chat` accepts the same body and returns:
+**Intended purpose:** Answer PropMatch usage questions and recommend a human
+handoff when the user explicitly requests one, reports a payment/security
+emergency, or repeatedly fails to resolve an issue.
+
+**Intended ownership boundary:** FastAPI may recommend escalation, but it must
+not create a ticket. NestJS owns `SupportTicket`, `SupportMessage`, PostgreSQL,
+ticket status transitions, and Socket.IO notifications.
+
+The current route and support service are incomplete. In particular, the stable
+request model does not yet include support history, the support SSE response is
+not yet finalized, and no buffered `POST /support/chat` endpoint exists. Do not
+integrate the frontend with this route until its contract and tests are complete.
+
+### Error Responses
+
+Validation and expected HTTP failures use the NestJS-compatible shape:
 
 ```json
 {
-  "id": "msg_...",
-  "content": "الإجابة...",
-  "declined": false,
-  "sources": [
-    {
-      "title": "القانون المدني المصري رقم 131 لسنة 1948",
-      "article": "المادة 558",
-      "file": "01_civil_law_131_1948.txt",
-      "source_url": "https://..."
-    }
-  ]
+  "statusCode": 400,
+  "message": ["validation message"]
 }
 ```
 
-## Configuration
+Common statuses are `400` for invalid input, `401` for an invalid internal key,
+`502` for LLM-provider failure, and `503` for retrieval or ChromaDB failure.
 
-All supported settings are documented in `.env.example`. The most important
-ones are:
+---
 
-| Variable | Purpose |
+## How The Code Fits Together
+
+| File | Responsibility |
 |---|---|
-| `SBG_API_KEY` | Bearer credential for the ITI LLM API |
-| `INTERNAL_SERVICE_API_KEY` | Shared NestJS-to-FastAPI credential |
-| `AUTH_REQUIRED` | Require internal authentication; keep `true` outside isolated development |
-| `JWT_SECRET` | Optional direct-JWT fallback, unused when the internal key is configured |
-| `CHROMA_HOST`, `CHROMA_PORT` | Chroma HTTP server address |
-| `CHROMA_COLLECTION` | Vector collection name |
-| `EMBEDDING_PROVIDER` | `iti` (default) or the hosted `cohere` fallback |
-| `EMBEDDING_API_URL` | ITI `/api/v1/student/embed` endpoint |
-| `EMBEDDING_API_KEY` | Optional separate key; blank reuses `SBG_API_KEY` |
-| `EMBEDDING_MODEL_ID` | ITI embedding model ID |
-| `COHERE_API_KEY` | Cohere trial or production API key |
-| `COHERE_MODEL_ID` | Cohere embedding model; defaults to `embed-v4.0` |
-| `COHERE_OUTPUT_DIMENSION` | Cohere vector size: `256`, `512`, `1024`, or `1536` |
-| `COHERE_MAX_RETRIES` | Maximum retries when Cohere returns HTTP 429 |
-| `COHERE_RETRY_WAIT_SECONDS` | Wait used when a 429 response omits `Retry-After` |
-| `EMBEDDING_BATCH_SIZE` | Maximum texts sent per embedding API request |
-| `CHUNK_SIZE`, `CHUNK_OVERLAP` | Corpus chunking controls |
-| `RETRIEVAL_TOP_K` | Passages supplied to the LLM |
-| `RELEVANCE_MAX_DISTANCE` | Cosine-distance ceiling used by the fallback topic guard |
+| `app/main.py` | Creates FastAPI, installs shared error handlers, registers routers, and exposes health probes. |
+| `app/auth.py` | Verifies the NestJS internal key and converts trusted headers into user context. |
+| `app/config.py` | Loads typed `.env` settings without exposing secret values in representations. |
+| `app/routers/legal_router.py` | Defines buffered and SSE legal HTTP contracts. |
+| `app/rag.py` | Runs the stable legal retrieval, relevance, prompt, disclaimer, and source pipeline. |
+| `app/embeddings.py` | Adapts ITI or Cohere embeddings to the LangChain interface. |
+| `app/vector_store.py` | Connects to the legal Chroma collection for ingestion and similarity search. |
+| `app/llm.py` | Calls the ITI generation API and normalizes supported response shapes. |
+| `app/chunking.py` | Splits law files by article and overlapping windows with deterministic IDs. |
+| `app/ingest.py` | Loads the law corpus and idempotently upserts chunks into ChromaDB. |
+| `app/routers/support_router.py` | Contains the in-progress support SSE endpoint. |
+| `app/services/support_rag.py` | Contains the in-progress support retrieval and answer orchestration. |
+| `app/services/escalation.py` | Produces advisory handoff decisions for NestJS to validate and execute. |
 
-If the embedding provider, model, or output dimension changes, select a new
-`CHROMA_COLLECTION` and re-ingest. Never query a collection with a different
-provider: embedding spaces are incompatible even when their dimensions match.
-Ingestion sends `input_type=search_document`; live questions send
-`input_type=search_query`.
+---
 
-The implementation deliberately contains no PyTorch, sentence-transformers, or
-local embedding path. Provider selection is explicit rather than automatic
-per-request failover, preventing mixed vectors from corrupting retrieval.
+## Environment Variables (`.env`)
 
-### Embedding-provider troubleshooting
-
-Before ingesting the full corpus, verify one query embedding:
+Copy `.env.example` to `.env`:
 
 ```bash
-python -c 'from app.embeddings import get_embeddings; print(len(get_embeddings().embed_query("عقد إيجار")))'
+cp .env.example .env
 ```
 
-The default is the approved catalog identifier
-`amazon.titan-embed-text-v2:0:8k`. An API response such as `MODEL_NOT_ALLOWED`,
-`REGION_NOT_ALLOWED`, or Bedrock `Model not found` is an ITI account/gateway
-configuration problem, not a Chroma connection problem. Ask the ITI API
-administrator to enable a text embedding model in an approved region, then set
-its exact identifier in `EMBEDDING_MODEL_ID` and rerun ingestion.
+Key environment settings:
 
-To use Cohere temporarily, set `EMBEDDING_PROVIDER=cohere`, add
-`COHERE_API_KEY`, choose a fresh collection name such as
-`egypt_real_estate_laws_cohere_v4_1024`, and rerun ingestion. Cohere trial keys
-are appropriate only for development and evaluation, not production use.
-Initial trial-key ingestion can pause for a minute when Cohere's token window
-is exhausted; the adapter retries the same batch and deterministic IDs make
-rerunning ingestion safe.
+| Variable                    | Purpose                        | Default / Example                |
+| --------------------------- | ------------------------------ | -------------------------------- |
+| `APP_NAME`                  | Service Title                  | `"PropMatch Unified AI Service"` |
+| `SBG_API_KEY`               | ITI Student API Key            | `your-iti-key`                   |
+| `INTERNAL_SERVICE_API_KEY`  | Shared secret key with NestJS  | `long-random-internal-key`       |
+| `CHROMA_HOST`               | ChromaDB container host        | `localhost`                      |
+| `CHROMA_PORT`               | ChromaDB container port        | `8000`                           |
+| `CHROMA_LEGAL_COLLECTION`   | Legal vector collection name   | `egypt_real_estate_laws_v1`      |
+| `CHROMA_SUPPORT_COLLECTION` | Support vector collection name | `support_kb_v1`                  |
 
-For local Python plus Dockerized Chroma, `CHROMA_HOST` must be `localhost`.
-Use `chroma` only when the FastAPI process also runs inside Docker Compose.
+---
 
-## Tests and quality checks
+## Data Ingestion into ChromaDB
+
+Ingest law documents (`laws/`) and support FAQs (`docs/support_faqs/`) into ChromaDB:
+
+### Using Docker Compose (Recommended)
+
+```bash
+docker compose up -d chroma
+docker compose run --rm api python -m app.ingest --target all
+```
+
+### Using Local Python
+
+```bash
+source .venv/bin/activate
+python -m app.ingest --target all
+```
+
+Check service readiness:
+
+```bash
+curl http://localhost:8001/health/ready
+```
+
+---
+
+## Running the Service
+
+### Docker Compose
+
+```bash
+docker compose up --build -d
+```
+
+### Local Python
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8001
+```
+
+---
+
+## Tests & Quality Checks
+
+Run pytest with mocked external APIs:
 
 ```bash
 source .venv/bin/activate
 pytest
-ruff check app tests
-python -m compileall -q app tests
 ```
-
-Tests mock Chroma, embeddings, authentication, and the external LLM. They cover
-chunk metadata/IDs, provider response parsing, off-topic behavior, disclaimer
-enforcement, request validation, and the exact frontend SSE shape.
-
-## Production notes
-
-- Pin `chromadb/chroma` to an organization-approved version after deployment
-  validation; `latest` is used here so the requested official image is easy to
-  start during development.
-- Put Chroma on a private network and do not expose port 8000 publicly.
-- Terminate TLS at the gateway and restrict CORS to the deployed frontend.
-- Keep `.env` out of version control and rotate API/internal service secrets normally.
-- The law bundle warns that OCR-derived documents may contain errors. Answers
-  are informational and should be checked against official publications and a
-  qualified lawyer for consequential decisions.
-- Monitor 502 (LLM provider) and 503 (retrieval/Chroma) responses separately.
-- Re-run ingestion after corpus updates. `upsert` makes repeated ingestion safe,
-  but removed source chunks are not automatically deleted; use a new collection
-  for controlled corpus releases.
-
-## Key files
-
-- `app/main.py` — FastAPI routes, errors, health, SSE serialization.
-- `app/rag.py` — relevance guard, prompt context, sources, disclaimer.
-- `app/vector_store.py` — LangChain Chroma collection, ingestion, retrieval.
-- `app/embeddings.py` — selectable ITI and Cohere LangChain adapters.
-- `app/chunking.py` — corpus parser and deterministic chunks.
-- `app/llm.py` — ITI LLM API client.
-- `app/auth.py` — internal service-key verification and optional JWT fallback.
-- `app/ingest.py` — ingestion CLI.
-- `PLAN.md` / `AGENT_CONTEXT.md` — execution plan and future-agent handoff.

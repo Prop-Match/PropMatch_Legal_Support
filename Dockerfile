@@ -9,6 +9,7 @@ WORKDIR /service
 COPY pyproject.toml ./
 COPY app ./app
 COPY laws ./laws
+COPY docs ./docs
 
 RUN pip install --upgrade pip && pip install .
 

@@ -1,75 +1,58 @@
-# PropMatch Legal Support Service Plan
+# PropMatch Unified AI Service Plan (Legal RAG & Customer Support Assistant)
 
 ## Goal
 
-Build a standalone FastAPI service in this directory that provides the legal
-chatbot required by the PropMatch frontend. It will retrieve relevant passages
-from the supplied Egyptian real-estate laws in ChromaDB and use the same ITI
-LLM API pattern already used by the NestJS `FormOptimizerService`.
+Build a single, unified standalone FastAPI service in this directory (`PropMatch_Legal_Support`) that provides both the **Legal RAG Assistant** and the **Customer Support AI Assistant** for the PropMatch platform.
 
-## Confirmed contract and constraints
+It retrieves relevant passages from Dockerized ChromaDB vector collections (`CHROMA_LEGAL_COLLECTION` and `CHROMA_SUPPORT_COLLECTION`), evaluates multi-factor escalation rules for human support handoff, and calls the shared ITI LLM API provider (`openai.gpt-oss-120b-1:0`).
 
-- Main endpoint: `POST /legal-chat/stream`.
+---
+
+## Confirmed Contracts & Constraints
+
+### 1. Legal Assistant Domain
+
+- Main Streamed Endpoint: `POST /legal-chat/stream`
+- Buffered Endpoint: `POST /legal-chat`
 - Request JSON: `{ "message": "..." }`, 1–2000 characters.
 - Response: Server-Sent Events (`text/event-stream`).
-- Streaming chunks:
-  - `{"type":"token","value":"..."}`
-  - final `{"type":"done","id":"...","declined":false}`
-- Off-topic questions receive the Arabic graceful decline and finish with
-  `declined: true`.
-- Chat history is session-scoped and is not persisted.
-- Answers are informational, cite retrieved law/article metadata where
-  available, and include a non-binding legal-information disclaimer.
-- The only RAG corpus is `laws/egypt_real_estate_laws_txt_for_rag/`.
-- ChromaDB runs from its official Docker image; the application connects over
-  HTTP and does not embed an in-process vector database.
-- LLM calls follow the existing backend pattern: bearer `SBG_API_KEY`,
-  configurable ITI chat URL, model ID, messages, system prompt, and max tokens.
+- Chunks: `{"type":"token","value":"..."}` and final `{"type":"done","id":"...","declined":false}`.
+- Off-topic legal questions receive the Arabic graceful decline (*"أقدر أساعدك فقط في أسئلة الإيجار والقانون العقاري في مصر."*).
+- Legal Disclaimer: Enforces non-binding legal information disclaimer on all substantive responses.
+- Vector Collection: `CHROMA_LEGAL_COLLECTION` (`egypt_real_estate_laws_v1`).
 
-## Architecture
+### 2. Customer Support Assistant Domain
 
-1. Settings and application lifecycle validate configuration and initialize
-   shared clients.
-2. Corpus ingestion parses law text into article-aware, overlapping chunks and
-   stores content plus source metadata in ChromaDB.
-3. Environment-selected LangChain `Embeddings` adapters call ITI by default or
-   Cohere Embed v2 as a hosted fallback. Ingestion uses `search_document`;
-   retrieval uses `search_query`. Provider changes require a separate Chroma
-   collection and re-ingestion; no local PyTorch model is installed.
-4. A relevance guard combines explicit domain cues with vector distance. It
-   rejects clearly unrelated questions before an LLM call.
-5. LangChain Chroma retrieves top passages and a LangChain chat prompt builds a
-   constrained Arabic request for the ITI LLM API; the service streams the
-   resulting answer using the frontend's SSE format.
-6. A buffered `POST /legal-chat` endpoint mirrors the same behavior for API
-   clients and diagnostics.
-7. NestJS exposes the public authenticated endpoints and proxies/pipes FastAPI
-   using an internal service credential; the frontend only targets NestJS.
-8. Health/readiness and ingestion endpoints/scripts support operations.
+- Main Streamed Endpoint: `POST /support/stream`
+- Request JSON: `{ "message": "...", "history": [...] }`, 1–2000 characters per message, max 10 history items.
+- Escalation Recommendation: Emits `{"type":"escalate","shouldEscalate":true,"reason":"...","priority":"HIGH"}` when escalation rules trigger.
+- Multi-Factor Escalation: Evaluates explicit human requests, payment/account emergencies, and 4+ unresolved follow-up attempts.
+- Vector Collection: `CHROMA_SUPPORT_COLLECTION` (`support_kb_v1`).
 
-## Execution steps
+### 3. Shared Infrastructure
 
-1. Scaffold the FastAPI package and typed settings.
-2. Implement article-aware chunking, deterministic IDs, manifest metadata,
-   Chroma collection management, and idempotent ingestion.
-3. Implement embeddings, retrieval, relevance guard, prompt construction, and
-   resilient parsing of the ITI LLM response formats.
-4. Implement buffered and SSE routes, validation, CORS, error handling, and
-   health endpoints.
-5. Add Dockerfile and Docker Compose with the official ChromaDB image.
-6. Add unit/API tests with external dependencies mocked.
-7. Add `.env.example`, `.dockerignore`, `.gitignore`, and a complete README
-   covering architecture, setup, ingestion, running, API examples, and NestJS/
-   frontend integration.
-8. Run tests and static/compile checks, then document any remaining operational
-   requirements.
+- Security: Requires `X-Internal-Service-Key` matching NestJS `INTERNAL_SERVICE_API_KEY`.
+- Vector Database: External Dockerized ChromaDB container on `CHROMA_HOST:8000`.
+- LLM Provider: ITI Chat API (`http://apiaccess.iti.net.eg/api/v1/student/chat`).
 
-## Definition of done
+---
 
-- The frontend-compatible stream contract is tested.
-- Off-topic decline is tested and avoids the LLM.
-- Corpus chunking and idempotent ingestion behavior are tested.
-- No secret is committed.
-- Docker Compose starts FastAPI plus ChromaDB.
-- README and `.env.example` are sufficient for a new developer to run the
-  service and connect it to PropMatch.
+## Architecture & Modular Routers
+
+1. **`app/main.py`**: Single FastAPI application registering both domain routers (`legal_router` and `support_router`).
+2. **`app/routers/legal_router.py`**: Handles `POST /legal-chat/stream` and `POST /legal-chat`.
+3. **`app/routers/support_router.py`**: Handles `POST /support/stream` and `POST /support/chat`.
+4. **`app/services/legal_rag.py`**: Queries legal collection and enforces Egyptian law context + disclaimer.
+5. **`app/services/support_rag.py`**: Queries platform FAQ collection (`docs/support_faqs/`).
+6. **`app/services/escalation.py`**: Evaluates 3 escalation rules for human support handoff.
+7. **`app/ingest.py`**: CLI script supporting `--target legal`, `--target support`, or `--target all`.
+
+---
+
+## Definition of Done
+
+- Both `POST /legal-chat/stream` and `POST /support/stream` contracts function cleanly.
+- `POST /legal-chat/stream` endpoint name remains 100% backward compatible.
+- Support escalation emits `escalate` chunk when triggered.
+- Vector collections (`CHROMA_LEGAL_COLLECTION` & `CHROMA_SUPPORT_COLLECTION`) ingest data without errors.
+- Unit tests pass for both legal and support pipelines with mocked external APIs.

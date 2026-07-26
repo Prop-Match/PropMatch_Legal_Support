@@ -1,0 +1,79 @@
+"""Retrieval-Augmented Generation (RAG) service for the Customer Support AI domain."""
+
+import uuid
+from dataclasses import dataclass
+from app.config import get_settings
+from app.llm import get_llm_client
+from app.services.escalation import evaluate_escalation
+from app.vector_store import get_vector_store
+
+
+@dataclass
+class SupportAnswer:
+    """Indexed support answer data with metadata and status."""
+
+    id: str
+    content: str
+    sources: list[dict]
+    declined: bool
+
+
+class SupportRagService:
+    """Retrieves platform FAQ passages from ChromaDB and generates grounded support answers."""
+
+    def __init__(self):
+        self.settings = get_settings()
+        self.vector_store = get_vector_store(
+            collection_name=self.settings.chroma_support_collection
+        )
+        self.llm = get_llm_client()
+
+    async def answer(self, question: str, history: list[dict] | None = None) -> SupportAnswer:
+        """Search support_kb_v1 collection and generate a grounded support answer."""
+        msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+
+        escalation = evaluate_escalation(question, history)
+        if escalation.get("shouldEscalate"):
+            return SupportAnswer(
+                id=msg_id,
+                content="جاري تحويل طلبك إلى فريق خدمة العملاء والدعم الفني لمساعدتك مباشرة. يمكنك النقر على زر 'تحدث مع موظف' أعلاه لفتح تذكرة مباشرة مع الإدارة.",
+                sources=[],
+                declined=False,
+            )
+
+        # Search support_kb_v1 collection
+        results = await self.vector_store.asimilarity_search_with_score(
+            question, k=self.settings.retrieval_top_k
+        )
+
+        relevant_docs = [
+            doc for doc, score in results if score <= self.settings.relevance_max_distance
+        ]
+
+        if not relevant_docs:
+            return SupportAnswer(
+                id=msg_id,
+                content="عذراً، أستطيع مساعدتك فقط في الأسئلة المتعلقة بمنصة PropMatch وكيفية استخدامها. إذا كنت ترغب في التواصل مع مسؤول الدعم، يسعدنا تحويلك لموظف خدمة العملاء.",
+                sources=[],
+                declined=True,
+            )
+
+        context_str = "\n\n".join([doc.page_content for doc in relevant_docs])
+        system_prompt = (
+            "أنت مساعد الدعم الفني الذكي لمنصة PropMatch. أجب بناءً على الإرشادات التالية فقط:\n"
+            f"{context_str}"
+        )
+
+        response_text = await self.llm.generate(system_prompt=system_prompt, prompt=question)
+
+        return SupportAnswer(
+            id=msg_id,
+            content=response_text,
+            sources=[doc.metadata for doc in relevant_docs],
+            declined=False,
+        )
+
+
+def get_support_rag_service() -> SupportRagService:
+    """Return an instance of SupportRagService for FastAPI dependency injection."""
+    return SupportRagService()

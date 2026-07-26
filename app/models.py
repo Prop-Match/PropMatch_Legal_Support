@@ -1,10 +1,15 @@
+"""Pydantic request, response, health, and SSE wire models."""
+
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class ChatRequest(BaseModel):
+    """A single user question accepted by legal and support chat contracts."""
+
     message: str = Field(min_length=1, max_length=2000)
+    history: list[dict[str, str]] | None = None
 
     @field_validator("message")
     @classmethod
@@ -16,6 +21,8 @@ class ChatRequest(BaseModel):
 
 
 class Source(BaseModel):
+    """Public provenance for a legal passage or FAQ document used to ground an answer."""
+
     title: str
     article: str | None = None
     file: str
@@ -23,6 +30,8 @@ class Source(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """Completed non-streaming legal or support answer."""
+
     id: str
     content: str
     declined: bool
@@ -30,18 +39,24 @@ class ChatResponse(BaseModel):
 
 
 class TokenChunk(BaseModel):
+    """One progressive text fragment in an SSE response."""
+
     type: Literal["token"] = "token"
     value: str
 
 
 class DoneChunk(BaseModel):
+    """Terminal SSE event identifying the answer, off-topic decision, and escalation status."""
+
     type: Literal["done"] = "done"
     id: str
-    declined: bool
+    declined: bool = False
+    escalated: bool = False
 
 
 class HealthResponse(BaseModel):
+    """Liveness/readiness state consumed by operators and containers."""
+
     status: Literal["ok", "degraded"]
     chroma: Literal["up", "down", "not_checked"]
     collection_count: int | None = None
-

@@ -1,12 +1,17 @@
+"""ITI/SBG language-model client and defensive response parsing."""
+
+from functools import lru_cache
 from typing import Any
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.config import Settings
+from app.config import Settings, get_settings
 
 
 class LlmProviderError(RuntimeError):
+    """Raised when the external generation provider cannot return usable text."""
+
     pass
 
 
@@ -47,11 +52,14 @@ LEGAL_PROMPT = ChatPromptTemplate.from_messages(
 
 
 class ItiLlmClient:
+    """Generate grounded text through the configurable ITI chat endpoint."""
+
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         self.settings = settings
         self._client = client
 
     async def answer(self, question: str, context: str) -> str:
+        """Format the legal prompt, call ITI asynchronously, and return plain text."""
         if not self.settings.sbg_api_key:
             raise LlmProviderError("SBG_API_KEY is not configured")
 
@@ -64,6 +72,18 @@ class ItiLlmClient:
             }
             for message in prompt_messages[1:]
         ]
+        return await self.generate_raw(system_prompt=system_prompt, messages=messages)
+
+    async def generate(self, system_prompt: str, prompt: str) -> str:
+        """Generate text for general RAG prompts (e.g. Support RAG)."""
+        messages = [{"role": "user", "content": prompt}]
+        return await self.generate_raw(system_prompt=system_prompt, messages=messages)
+
+    async def generate_raw(self, system_prompt: str, messages: list[dict[str, str]]) -> str:
+        """Call ITI LLM chat endpoint with formatted payload."""
+        if not self.settings.sbg_api_key:
+            raise LlmProviderError("SBG_API_KEY is not configured")
+
         payload = {
             "model_id": self.settings.llm_model_id,
             "messages": messages,
@@ -94,6 +114,7 @@ class ItiLlmClient:
 
 
 def extract_generated_text(data: Any) -> str:
+    """Normalize the response shapes observed across compatible ITI models."""
     if not isinstance(data, dict):
         raise TypeError("LLM response must be a JSON object")
     for key in ("output_text", "reply", "content"):
@@ -115,3 +136,9 @@ def extract_generated_text(data: Any) -> str:
     if isinstance(message, dict) and isinstance(message.get("content"), str):
         return message["content"]
     raise KeyError("No supported generated-text field found")
+
+
+@lru_cache
+def get_llm_client() -> ItiLlmClient:
+    """Return cached ITI LLM client instance."""
+    return ItiLlmClient(get_settings())

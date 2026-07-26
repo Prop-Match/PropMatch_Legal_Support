@@ -1,74 +1,65 @@
-# Agent Context: PropMatch Legal Support
+# Agent Context: PropMatch Unified AI Microservice
 
 Read `PLAN.md` before making changes.
 
-## Repository findings
+## Repository Findings & Scope
 
-- Frontend: `../propmatch_frontend` (Next.js, Arabic RTL).
-- Existing backend: `../propmatch_backend` (NestJS).
-- New service location: this `legal support` directory.
-- Law corpus: `laws/egypt_real_estate_laws_txt_for_rag/` (nine UTF-8 text
-  files plus `manifest.json`). Some sources are OCR and may contain errors.
+- **Frontend**: `../propmatch_frontend` (Next.js 16, Arabic RTL, Dual-Mode Assistant).
+- **Backend Gateway**: `../propmatch_backend` (NestJS BFF).
+- **AI Microservice Location**: This repository (`PropMatch_Legal_Support`).
+- **Corpus Files**:
+  - Law Corpus: `laws/egypt_real_estate_laws_txt_for_rag/` (Egyptian Real Estate Law No. 4 of 1996).
+  - Support FAQs: `docs/support_faqs/` (Platform guides, tenant/landlord rules, eKYC, PayMob policies).
 
-## Frontend API contract
+---
 
-The component `../propmatch_frontend/src/features/legal/components/LegalChatbot.tsx`
-calls `streamPost("legal-chat/stream", { message })`.
+## API Endpoints & Contracts
 
-The SSE parser expects frames separated by a blank line and JSON after `data:`:
+### 1. Legal Assistant Endpoint (`POST /legal-chat/stream`)
 
-```text
-data: {"type":"token","value":"جزء من الإجابة "}
+- **Preserved Route**: `POST /legal-chat/stream` (100% backward compatible).
+- **Collection**: `CHROMA_LEGAL_COLLECTION` (`egypt_real_estate_laws_v1`).
+- **SSE Frame Format**:
 
-data: {"type":"done","id":"msg_uuid","declined":false}
+  ```text
+  data: {"type":"token","value":"جزء من الإجابة "}
 
-```
+  data: {"type":"done","id":"msg_uuid","declined":false}
+  ```
 
-The mock backend currently requires authentication, rejects blank messages,
-and uses this off-topic behavior:
+- **Disclaimer**: Appends legal disclaimer on all answers.
 
-```text
-أقدر أساعدك فقط في أسئلة الإيجار والقانون العقاري في مصر.
-```
+### 2. Customer Support Endpoint (`POST /support/stream`)
 
-The frontend's generic BFF forwards `/api/backend/*` only to NestJS. NestJS owns
-`/api/legal-chat` and `/api/legal-chat/stream`, validates the user JWT, then
-calls this FastAPI service with `X-Internal-Service-Key` and user-context
-headers. Do not add a direct frontend-to-FastAPI route.
+- **Route**: `POST /support/stream`.
+- **Collection**: `CHROMA_SUPPORT_COLLECTION` (`support_kb_v1`).
+- **Escalation Frame Format**:
 
-## LLM provider contract
+  ```text
+  data: {"type":"escalate","shouldEscalate":true,"reason":"طلب المستخدم التحدث مع موظف دعم فني بشكل صريح","priority":"HIGH"}
 
-Mirror `../propmatch_backend/src/properties/services/FormOptimizer.service.ts`:
+  data: {"type":"token","value":"تم تحويل طلبك..."}
 
-- URL: `http://apiaccess.iti.net.eg/api/v1/student/chat` (make configurable).
-- Header: `Authorization: Bearer ${SBG_API_KEY}`.
-- Body fields: `model_id`, `messages`, `system_prompt`, `max_tokens`.
-- Existing model: `openai.gpt-oss-120b-1:0`.
-- Provider output may be in `output_text`, `reply`, `content`, `choices`, or
-  `message`; parse these defensively.
+  data: {"type":"done","id":"msg_uuid","escalated":true}
+  ```
 
-## Legal/RAG rules
+---
 
-- Retrieve only from the supplied corpus.
-- Prefer article-aware chunks; retain law title, filename, article, source URL,
-  and extraction method as Chroma metadata.
-- Treat retrieved OCR text as potentially imperfect.
-- Tell the model to use only supplied context, admit when context is
-  insufficient, avoid fabricated article numbers, and answer in Arabic.
-- Every substantive response must include a concise disclaimer that it is
-  general legal information and not binding legal advice.
-- Never persist messages or send identity/KYC data to ChromaDB or the LLM.
-- Do not add unrelated property semantic-search behavior; this service is only
-  the legal assistant.
+## Security & BFF Gateway
 
-## Operational choices
+The Next.js frontend sends requests to NestJS (`/api/backend/legal-chat/stream` or `/api/backend/support/ai-chat/stream`). NestJS validates the user JWT and proxies the stream to this FastAPI service sending:
 
-- Python 3.12 target.
-- FastAPI + Uvicorn + HTTPX + LangChain + LangChain Chroma.
-- ChromaDB is an external container based on the official image.
-- Embeddings use an environment-selected custom LangChain adapter. ITI
-  `/student/embed` is the default; Cohere Embed v2 is the temporary hosted
-  fallback. A provider/model switch requires a separate Chroma collection and
-  full re-ingestion. Never mix embedding spaces or add a local PyTorch model.
-- External LLM, embedding API calls, and Chroma are mocked in unit tests.
-- Secrets belong only in `.env`; commit `.env.example`, never real keys.
+- `X-Internal-Service-Key` (matching `INTERNAL_SERVICE_API_KEY`)
+- `X-PropMatch-User-Id`
+- `X-PropMatch-User-Role`
+
+Do not expose direct browser-to-FastAPI routes.
+
+---
+
+## LLM & Vector Store Setup
+
+- **LLM Provider**: ITI Student Chat API (`http://apiaccess.iti.net.eg/api/v1/student/chat`).
+- **Model**: `openai.gpt-oss-120b-1:0`.
+- **Vector DB**: Dockerized ChromaDB container (`CHROMA_HOST:8000`).
+- **Ingestion CLI**: Run `python -m app.ingest --target all`.
