@@ -1,3 +1,5 @@
+"""Convert the supplied Egyptian-law corpus and support FAQs into deterministic RAG chunks."""
+
 import hashlib
 import json
 import re
@@ -5,10 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# The source bundle mixes clean text with OCR. Article markers appear as
-# `(المادة الثانية)`, `مادة – 558...`, and noisy forms such as `مادة ):(٥`.
-# Anchor near the beginning of a line so references to another article inside
-# prose do not accidentally start a new section.
+# Article marker regex for legal documents
 ARTICLE_RE = re.compile(
     r"(?im)^[^\n]{0,3}?"
     r"((?:ال\s*)?مادة\s+[اأإآء-ي]{2,20}"
@@ -20,10 +19,16 @@ PAGE_BREAK_RE = re.compile(r"\s*---\s*PAGE BREAK\s*---\s*")
 
 
 @dataclass(frozen=True)
-class LawChunk:
+class RagChunk:
+    """One indexed passage with a stable ID and RAG source metadata."""
+
     id: str
     document: str
     metadata: dict[str, str | int]
+
+
+# Alias for backward compatibility
+LawChunk = RagChunk
 
 
 def _clean_text(text: str) -> str:
@@ -45,7 +50,9 @@ def _windows(text: str, size: int, overlap: int) -> list[str]:
     while start < len(text):
         end = min(start + size, len(text))
         if end < len(text):
-            boundary = max(text.rfind("\n", start + size // 2, end), text.rfind(". ", start, end))
+            boundary = max(
+                text.rfind("\n", start + size // 2, end), text.rfind(". ", start, end)
+            )
             if boundary > start:
                 end = boundary + 1
         chunk = text[start:end].strip()
@@ -72,15 +79,20 @@ def _sections(text: str) -> list[tuple[str, str]]:
 
 
 def load_manifest(corpus_dir: Path) -> dict[str, dict[str, Any]]:
-    records = json.loads((corpus_dir / "manifest.json").read_text(encoding="utf-8"))
+    """Load source titles, URLs, and extraction details for each law file."""
+    manifest_file = corpus_dir / "manifest.json"
+    if not manifest_file.exists():
+        return {}
+    records = json.loads(manifest_file.read_text(encoding="utf-8"))
     return {record["file"]: record for record in records}
 
 
-def chunk_corpus(corpus_dir: Path, size: int, overlap: int) -> list[LawChunk]:
+def chunk_corpus(corpus_dir: Path, size: int, overlap: int) -> list[RagChunk]:
+    """Split every law by article and then into overlapping retrieval windows."""
     if overlap >= size:
         raise ValueError("chunk_overlap must be smaller than chunk_size")
     manifest = load_manifest(corpus_dir)
-    chunks: list[LawChunk] = []
+    chunks: list[RagChunk] = []
     for path in sorted(corpus_dir.glob("*.txt")):
         if path.name == "README_RAG.txt":
             continue
@@ -94,7 +106,7 @@ def chunk_corpus(corpus_dir: Path, size: int, overlap: int) -> list[LawChunk]:
                     f"{path.name}:{article}:{sequence}:{part}".encode()
                 ).hexdigest()[:24]
                 chunks.append(
-                    LawChunk(
+                    RagChunk(
                         id=f"law_{digest}",
                         document=part,
                         metadata={
@@ -108,4 +120,38 @@ def chunk_corpus(corpus_dir: Path, size: int, overlap: int) -> list[LawChunk]:
                     )
                 )
                 sequence += 1
+    return chunks
+
+
+def chunk_support_faqs(support_dir: Path, size: int, overlap: int) -> list[RagChunk]:
+    """Split support FAQ markdown files into overlapping retrieval windows with deterministic IDs."""
+    if overlap >= size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size")
+    chunks: list[RagChunk] = []
+    if not support_dir.exists():
+        return chunks
+
+    for path in sorted(support_dir.glob("*.md")):
+        text = _clean_text(path.read_text(encoding="utf-8"))
+        title_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else path.stem
+
+        sequence = 0
+        for part in _windows(text, size, overlap):
+            digest = hashlib.sha256(
+                f"{path.name}:{sequence}:{part}".encode()
+            ).hexdigest()[:24]
+            chunks.append(
+                RagChunk(
+                    id=f"support_{digest}",
+                    document=part,
+                    metadata={
+                        "title": title,
+                        "file": path.name,
+                        "category": "support_faq",
+                        "sequence": sequence,
+                    },
+                )
+            )
+            sequence += 1
     return chunks
