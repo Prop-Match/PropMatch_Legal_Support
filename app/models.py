@@ -5,11 +5,20 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class UserContext(BaseModel):
+    fullName: str
+    role: str
+    kycStatus: str
+    kycRejectionReason: str | None = None
+
+
+
 class ChatRequest(BaseModel):
     """A single user question accepted by legal and support chat contracts."""
 
     message: str = Field(min_length=1, max_length=2000)
     history: list[dict[str, str]] | None = None
+    userContext: UserContext | None = None
 
     @field_validator("message")
     @classmethod
@@ -52,6 +61,7 @@ class DoneChunk(BaseModel):
     id: str
     declined: bool = False
     escalated: bool = False
+    suggestedGuide: list[str] = []
 
 
 class HealthResponse(BaseModel):

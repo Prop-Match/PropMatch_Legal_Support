@@ -45,7 +45,7 @@ async def support_chat_stream(
             yield f"data: {json.dumps(escalate_chunk, ensure_ascii=False)}\n\n"
 
         # 2. Stream tokens
-        result = await rag.answer(payload.message, payload.history)
+        result = await rag.answer(payload.message, payload.history, payload.userContext)
         for token in result.content.splitlines(keepends=True):
             words = token.split(" ")
             for index, word in enumerate(words):
@@ -53,8 +53,23 @@ async def support_chat_stream(
                 chunk = TokenChunk(value=f"{word}{suffix}")
                 yield f"data: {json.dumps(chunk.model_dump(), ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
-
-        done = DoneChunk(id=result.id, escalated=escalation.get("shouldEscalate", False))
+        suggested_guides = []
+        content_lower = result.content.lower()
+        if any(w in content_lower for w in ["kyc", "توثيق", "الهوية"]):
+            suggested_guides.append("KYC_GUIDE")
+        if any(
+            w in content_lower for w in ["عقار", "property", "إضافة عقار", "اضافة عقار"]
+        ):
+            suggested_guides.append("PROPERTY_GUIDE")
+        if any(
+            w in content_lower for w in ["طلب سكن", "tenant request", "طلبات السكن"]
+        ):
+            suggested_guides.append("REQUEST_GUIDE")
+        done = DoneChunk(
+            id=result.id,
+            escalated=escalation.get("shouldEscalate", False),
+            suggestedGuide=suggested_guides,
+        )
         yield f"data: {json.dumps(done.model_dump(), ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

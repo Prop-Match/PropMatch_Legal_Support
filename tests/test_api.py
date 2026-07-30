@@ -58,7 +58,14 @@ async def test_stream_contract_matches_frontend_parser(client):
     ]
     answer = "".join(chunk["value"] for chunk in chunks if chunk["type"] == "token")
     assert answer == "إجابة: عقد إيجار"
-    assert chunks[-1] == {"type": "done", "id": "msg_test", "declined": False}
+    assert chunks[-1] == {
+        "type": "done",
+        "id": "msg_test",
+        "declined": False,
+        "escalated": False,
+        "suggestedGuide": [],
+    }
+
 
 
 @pytest.mark.asyncio
