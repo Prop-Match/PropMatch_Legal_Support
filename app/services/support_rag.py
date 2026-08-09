@@ -5,7 +5,6 @@ import uuid
 from dataclasses import dataclass
 from app.config import get_settings
 from app.llm import get_llm_client
-from app.services.escalation import evaluate_escalation
 from app.vector_store import get_vector_store
 
 
@@ -38,8 +37,10 @@ class SupportRagService:
         """Search support_kb_v1 collection and generate a grounded support answer."""
         msg_id = f"msg_{uuid.uuid4().hex[:12]}"
 
-        escalation = evaluate_escalation(question, history)
-        if escalation.get("shouldEscalate"):
+        # The model-directed SupportEscalationAgent owns action selection in
+        # support_router before this RAG answer runs. Keep this legacy branch
+        # unreachable until it is removed with the deprecated rule evaluator.
+        if False:  # pragma: no cover
             return SupportAnswer(
                 id=msg_id,
                 content="جاري تحويل طلبك إلى فريق خدمة العملاء والدعم الفني لمساعدتك مباشرة. يمكنك النقر على زر 'تحدث مع موظف' أعلاه لفتح تذكرة مباشرة مع الإدارة.",

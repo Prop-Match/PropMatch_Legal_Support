@@ -2,7 +2,7 @@
 
 Standalone FastAPI retrieval-augmented generation (RAG) microservice for the PropMatch platform, hosting both the **Legal Chatbot** and the **Customer Support AI Assistant**.
 
-It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, evaluates multi-factor escalation rules for human support handoff, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider.
+It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider. Its support agent decides whether to answer from the knowledge base or call NestJS's protected ticket-creation tool.
 
 ---
 
@@ -10,7 +10,7 @@ It answers Arabic legal questions regarding Egyptian real-estate law using `laws
 
 - **Legal Chat Stream**: `POST /legal-chat/stream` (SSE tokens + legal disclaimer enforcement).
 - **Legal Chat Buffered**: `POST /legal-chat` (buffered JSON answer with cited law sources).
-- **Support Chat Stream**: `POST /support/stream` (under implementation; not production-ready).
+- **Support Chat Stream**: `POST /support/ai-chat/stream` (SSE, model-directed answer or human handoff).
 - **Health Probes**: `GET /health/live` and `GET /health/ready`.
 - **Internal Key Security**: Validates `X-Internal-Service-Key` header sent by NestJS BFF.
 - **Dedicated Vector Collections**:
@@ -149,20 +149,43 @@ data: {"type":"done","id":"msg_...","declined":false}
 The terminal `done` frame is sent exactly once. `declined=true` means the legal
 agent rejected an off-topic question without presenting it as legal advice.
 
-### `POST /support/stream` (Under Implementation)
+### `POST /support/ai-chat/stream`
 
-**Intended purpose:** Answer PropMatch usage questions and recommend a human
-handoff when the user explicitly requests one, reports a payment/security
-emergency, or repeatedly fails to resolve an issue.
+**Purpose:** Answer PropMatch usage questions or autonomously create a human
+support ticket. The model selects `RESPOND` or `CREATE_SUPPORT_TICKET` from the
+current message and conversation history. For the ticket action, FastAPI calls
+the private NestJS tool endpoint; NestJS authenticates, validates, persists,
+and notifies the admin queue.
 
-**Intended ownership boundary:** FastAPI may recommend escalation, but it must
-not create a ticket. NestJS owns `SupportTicket`, `SupportMessage`, PostgreSQL,
-ticket status transitions, and Socket.IO notifications.
+**Ownership boundary:** FastAPI may select and invoke the ticket tool, but it
+never accesses PostgreSQL or ticket state directly. NestJS owns
+`SupportTicket`, `SupportMessage`, ticket status transitions, and Socket.IO
+notifications. The browser sends a UUID `clientRequestId`; NestJS persists it
+as an idempotency key, so a retried stream cannot duplicate a ticket.
 
-The current route and support service are incomplete. In particular, the stable
-request model does not yet include support history, the support SSE response is
-not yet finalized, and no buffered `POST /support/chat` endpoint exists. Do not
-integrate the frontend with this route until its contract and tests are complete.
+The terminal `done` frame sets `escalated=true` only after NestJS has created
+or returned the ticket. If the tool is unavailable, the agent does not claim an
+escalation and returns a normal support response.
+
+### EC2 Docker configuration
+
+On the EC2 host, set these values in the FastAPI service's `.env` before
+restarting Docker Compose:
+
+```dotenv
+# Private or security-group-restricted NestJS URL reachable from this container.
+SUPPORT_TICKET_API_URL=http://<nestjs-private-host>:3001
+# INTERNAL_SERVICE_API_KEY must match the NestJS service. It must not be a
+# browser key.
+SUPPORT_TICKET_TIMEOUT_SECONDS=10
+```
+
+Set `INTERNAL_SERVICE_API_KEY` to the same secret in the NestJS service
+environment. Then rebuild/restart the FastAPI service:
+
+```bash
+docker compose up -d --build api
+```
 
 ### Error Responses
 

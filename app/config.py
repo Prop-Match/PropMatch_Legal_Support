@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=700, ge=100, le=4000)
     llm_timeout_seconds: float = Field(default=90, gt=0)
 
+    # Private NestJS endpoint used by the model-selected support-ticket tool.
+    # This must be reachable from the EC2 Docker network, never from browsers.
+    support_ticket_api_url: str = Field(default="", alias="SUPPORT_TICKET_API_URL")
+    support_ticket_timeout_seconds: float = Field(
+        default=10, gt=0, le=60, alias="SUPPORT_TICKET_TIMEOUT_SECONDS"
+    )
+
     embedding_provider: Literal["iti", "cohere"] = "iti"
     embedding_api_url: str = "http://apiaccess.iti.net.eg/api/v1/student/embed"
     embedding_api_key: str = Field(default="", repr=False)
