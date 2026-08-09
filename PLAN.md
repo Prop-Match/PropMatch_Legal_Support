@@ -25,7 +25,7 @@ It retrieves relevant passages from Dockerized ChromaDB vector collections (`CHR
 
 - Main Streamed Endpoint: `POST /support/stream`
 - Request JSON: `{ "message": "...", "history": [...] }`, 1–2000 characters per message, max 10 history items.
-- Escalation Recommendation: Emits `{"type":"escalate","shouldEscalate":true,"reason":"...","priority":"HIGH"}` when escalation rules trigger.
+- Escalation Recommendation: Emits a terminal `done` intent with `escalated=true`, a bounded reason, and priority when escalation rules trigger. NestJS persists the ticket before forwarding success.
 - Multi-Factor Escalation: Evaluates explicit human requests, payment/account emergencies, and 4+ unresolved follow-up attempts.
 - Vector Collection: `CHROMA_SUPPORT_COLLECTION` (`support_kb_v1`).
 
@@ -53,6 +53,6 @@ It retrieves relevant passages from Dockerized ChromaDB vector collections (`CHR
 
 - Both `POST /legal-chat/stream` and `POST /support/stream` contracts function cleanly.
 - `POST /legal-chat/stream` endpoint name remains 100% backward compatible.
-- Support escalation emits `escalate` chunk when triggered.
+- Support escalation emits a structured terminal intent when triggered; NestJS enriches it with the persisted `ticketId`.
 - Vector collections (`CHROMA_LEGAL_COLLECTION` & `CHROMA_SUPPORT_COLLECTION`) ingest data without errors.
 - Unit tests pass for both legal and support pipelines with mocked external APIs.

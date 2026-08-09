@@ -1,59 +1,81 @@
-"""Multi-factor escalation evaluator for human support handoff."""
+"""Deterministic policy for requesting a human-support handoff."""
+
+from dataclasses import dataclass
+from typing import Literal
+
+EscalationPriority = Literal["NORMAL", "HIGH", "URGENT"]
 
 
-def evaluate_escalation(message: str, history: list[dict] | None = None) -> dict:
-    """Evaluates 3 escalation rules without relying solely on keywords or anger.
+@dataclass(frozen=True)
+class EscalationDecision:
+    """A bounded decision consumed by the trusted NestJS gateway."""
 
-    Rules:
-    1. Explicit Human Support / Customer Service Request -> HIGH Priority.
-    2. Payment / Account Security Emergency -> URGENT Priority.
-    3. Repeated Unresolved Attempts (history >= 4 user turns) -> NORMAL Priority.
-    """
-    msg_lower = message.lower().strip()
+    should_escalate: bool
+    reason: str = ""
+    priority: EscalationPriority = "NORMAL"
 
-    # Rule 1: Explicit Human Support / Customer Service Request
-    human_keywords = [
+
+def evaluate_escalation(
+    message: str, history: list[dict[str, str]] | None = None
+) -> EscalationDecision:
+    """Request escalation only for explicit, urgent, or repeatedly unresolved cases."""
+
+    normalized = " ".join(message.lower().strip().split())
+
+    human_requests = (
         "خدمة العملاء",
         "خدمة عملاء",
         "خدمه العملاء",
         "تحدث مع شخص",
         "تحدث مع موظف",
+        "التحدث مع شخص",
+        "التحدث مع موظف",
         "أريد التحدث",
         "اريد التحدث",
         "تحويل لموظف",
-        "تحويل موظف",
+        "حولني لموظف",
+        "حوّلني لموظف",
         "دعم بشري",
         "تحدث مع إنسان",
+        "تحدث مع انسان",
         "كلم موظف",
-        "التحدث مع شخص",
-        "التحدث مع موظف",
-        "التحدث مع خدمة",
         "كلمني موظف",
         "مسؤول الدعم",
-    ]
-    if any(phrase in msg_lower for phrase in human_keywords):
-        return {
-            "shouldEscalate": True,
-            "reason": "طلب المستخدم التحدث مع خدمة العملاء / موظف دعم فني بشكل صريح",
-            "priority": "HIGH",
-        }
+        "موظف دعم",
+    )
+    if any(phrase in normalized for phrase in human_requests):
+        return EscalationDecision(
+            should_escalate=True,
+            reason="طلب المستخدم التحدث مع موظف دعم فني بشكل صريح",
+            priority="HIGH",
+        )
 
-    # Rule 2: Emergency (Payment or Security)
-    if any(kw in msg_lower for kw in ["سرقة", "احتيال", "اختراق", "خصم بدون علم"]):
-        return {
-            "shouldEscalate": True,
-            "reason": "تم الكشف عن حالة طوارئ مالية أو أمنية",
-            "priority": "URGENT",
-        }
+    urgent_phrases = (
+        "سرقة",
+        "احتيال",
+        "اختراق",
+        "خصم بدون علم",
+        "خصم دون علم",
+        "عملية غير مصرح",
+        "دفعة غير مصرح",
+        "اتخصم المبلغ ولم",
+        "تم خصم المبلغ ولم",
+    )
+    if any(phrase in normalized for phrase in urgent_phrases):
+        return EscalationDecision(
+            should_escalate=True,
+            reason="تم اكتشاف حالة دفع أو أمان تحتاج إلى مراجعة بشرية عاجلة",
+            priority="URGENT",
+        )
 
-    # Rule 3: Repeated Unresolved Attempts (history >= 4 user turns)
-    if history:
-        user_turns = sum(1 for m in history if m.get("role") == "user")
-        if user_turns >= 4:
-            return {
-                "shouldEscalate": True,
-                "reason": "المستخدم يحاول حل المشكلة منذ عدة محاولات دون جدوى",
-                "priority": "NORMAL",
-            }
+    user_turns = sum(
+        1 for item in history or [] if str(item.get("role", "")).lower() == "user"
+    )
+    if user_turns >= 4:
+        return EscalationDecision(
+            should_escalate=True,
+            reason="تكررت محاولات المستخدم دون الوصول إلى حل",
+            priority="NORMAL",
+        )
 
-    return {"shouldEscalate": False}
+    return EscalationDecision(should_escalate=False)

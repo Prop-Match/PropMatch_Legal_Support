@@ -2,7 +2,7 @@
 
 Standalone FastAPI retrieval-augmented generation (RAG) microservice for the PropMatch platform, hosting both the **Legal Chatbot** and the **Customer Support AI Assistant**.
 
-It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider. Its support agent decides whether to answer from the knowledge base or call NestJS's protected ticket-creation tool.
+It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider. Its support policy either answers from the knowledge base or emits a structured handoff intent for the authenticated NestJS gateway to execute.
 
 ---
 
@@ -10,7 +10,7 @@ It answers Arabic legal questions regarding Egyptian real-estate law using `laws
 
 - **Legal Chat Stream**: `POST /legal-chat/stream` (SSE tokens + legal disclaimer enforcement).
 - **Legal Chat Buffered**: `POST /legal-chat` (buffered JSON answer with cited law sources).
-- **Support Chat Stream**: `POST /support/ai-chat/stream` (SSE, model-directed answer or human handoff).
+- **Support Chat Stream**: `POST /support/ai-chat/stream` (SSE, grounded answer or policy-directed human handoff).
 - **Health Probes**: `GET /health/live` and `GET /health/ready`.
 - **Internal Key Security**: Validates `X-Internal-Service-Key` header sent by NestJS BFF.
 - **Dedicated Vector Collections**:
@@ -151,38 +151,18 @@ agent rejected an off-topic question without presenting it as legal advice.
 
 ### `POST /support/ai-chat/stream`
 
-**Purpose:** Answer PropMatch usage questions or request an autonomous human
-support handoff. The model selects `RESPOND` or `CREATE_SUPPORT_TICKET` from
-the current message and conversation history. FastAPI emits the selected action
-in the terminal SSE frame; NestJS authenticates, validates, persists, and
-notifies the admin queue.
+**Purpose:** Answer PropMatch usage questions and request a human handoff when
+the user explicitly asks for an employee, reports a payment/security emergency,
+or repeatedly fails to resolve the same issue.
 
-**Ownership boundary:** FastAPI selects the action but never creates tickets or
-calls a ticket API. NestJS owns
-`SupportTicket`, `SupportMessage`, ticket status transitions, and Socket.IO
-notifications. The browser sends a UUID `clientRequestId`; NestJS persists it
-as an idempotency key, so a retried stream cannot duplicate a ticket.
+The AI service emits only a structured escalation intent. The authenticated
+NestJS gateway creates or reuses the `SupportTicket`, then rewrites the terminal
+`done` frame with `escalated=true` and the persisted `ticketId`. This keeps all
+database authority and user identity inside NestJS and prevents a success
+message from being shown before persistence succeeds.
 
-For an escalation, FastAPI emits this intent in its terminal `done` frame:
-
-```json
-{
-  "type": "done",
-  "escalated": true,
-  "escalationReason": "سبب التصعيد",
-  "priority": "HIGH"
-}
-```
-
-NestJS replaces that intent with a confirmed `ticketId` only after the ticket
-has been created or reused. If persistence fails, the browser receives
-`escalated=false` and a manual-handoff fallback message.
-
-### EC2 Docker configuration
-
-Set `INTERNAL_SERVICE_API_KEY` in FastAPI to the same value configured as
-`LEGAL_SUPPORT_INTERNAL_API_KEY` in NestJS. It is a server-to-server secret,
-never a browser key. Then rebuild/restart the FastAPI service:
+Set `INTERNAL_SERVICE_API_KEY` to the same secret in the NestJS service
+environment. Then rebuild/restart the FastAPI service:
 
 ```bash
 docker compose up -d --build api
@@ -220,7 +200,6 @@ Common statuses are `400` for invalid input, `401` for an invalid internal key,
 | `app/ingest.py` | Loads the law corpus and idempotently upserts chunks into ChromaDB. |
 | `app/routers/support_router.py` | Contains the in-progress support SSE endpoint. |
 | `app/services/support_rag.py` | Contains the in-progress support retrieval and answer orchestration. |
-| `app/services/escalation.py` | Produces advisory handoff decisions for NestJS to validate and execute. |
 
 ---
 

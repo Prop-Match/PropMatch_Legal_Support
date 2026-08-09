@@ -33,15 +33,14 @@ Read `PLAN.md` before making changes.
 
 - **Route**: `POST /support/stream`.
 - **Collection**: `CHROMA_SUPPORT_COLLECTION` (`support_kb_v1`).
-- **Escalation Frame Format**:
+- **Internal Escalation Intent Format**:
 
   ```text
-  data: {"type":"escalate","shouldEscalate":true,"reason":"طلب المستخدم التحدث مع موظف دعم فني بشكل صريح","priority":"HIGH"}
-
-  data: {"type":"token","value":"تم تحويل طلبك..."}
-
-  data: {"type":"done","id":"msg_uuid","escalated":true}
+  data: {"type":"done","id":"msg_uuid","escalated":true,"escalationReason":"طلب المستخدم التحدث مع موظف دعم فني بشكل صريح","priority":"HIGH"}
   ```
+
+  NestJS creates or reuses the ticket using the authenticated user, then emits
+  the success token and adds `ticketId` to the terminal frame.
 
 ---
 

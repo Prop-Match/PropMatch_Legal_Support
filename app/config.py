@@ -92,14 +92,10 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if not self.sbg_api_key:
             missing.append("SBG_API_KEY")
-        if self.auth_required and not (
-            self.internal_service_api_key or self.jwt_secret
-        ):
+        if self.auth_required and not (self.internal_service_api_key or self.jwt_secret):
             missing.append("INTERNAL_SERVICE_API_KEY or JWT_SECRET")
         if missing:
-            raise RuntimeError(
-                f"Missing required environment variables: {', '.join(missing)}"
-            )
+            raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
     @property
     def resolved_embedding_api_key(self) -> str:
