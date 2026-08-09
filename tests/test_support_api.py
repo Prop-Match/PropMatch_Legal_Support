@@ -5,6 +5,8 @@ import pytest
 
 from app.auth import require_user
 from app.main import app
+from app.routers import support_router
+from app.services.support_agent import AgentDecision
 from app.services.support_rag import SupportAnswer, get_support_rag_service
 
 
@@ -40,8 +42,17 @@ async def client():
 
 
 @pytest.mark.asyncio
-async def test_explicit_human_request_emits_escalation_without_calling_rag(client):
+async def test_agent_escalation_emits_intent_without_calling_rag(client, monkeypatch):
     test_client, fake_rag = client
+    class EscalatingAgent:
+        async def decide(self, *_args, **_kwargs):
+            return AgentDecision(
+                action="CREATE_SUPPORT_TICKET",
+                reason="طلب المستخدم التحدث مع موظف دعم",
+                priority="HIGH",
+            )
+
+    monkeypatch.setattr(support_router, "SupportEscalationAgent", EscalatingAgent)
     response = await test_client.post(
         "/support/ai-chat/stream",
         json={"message": "أريد التحدث مع موظف خدمة العملاء"},
@@ -57,15 +68,20 @@ async def test_explicit_human_request_emits_escalation_without_calling_rag(clien
         "declined": False,
         "escalated": True,
         "suggestedGuide": [],
-        "escalationReason": "طلب المستخدم التحدث مع موظف دعم فني بشكل صريح",
+        "escalationReason": "طلب المستخدم التحدث مع موظف دعم",
         "priority": "HIGH",
     }
     assert fake_rag.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_normal_support_question_still_uses_rag(client):
+async def test_agent_response_still_uses_rag(client, monkeypatch):
     test_client, fake_rag = client
+    class RespondingAgent:
+        async def decide(self, *_args, **_kwargs):
+            return AgentDecision(action="RESPOND")
+
+    monkeypatch.setattr(support_router, "SupportEscalationAgent", RespondingAgent)
     response = await test_client.post(
         "/support/ai-chat/stream",
         json={"message": "كيف أضيف عقاراً؟"},

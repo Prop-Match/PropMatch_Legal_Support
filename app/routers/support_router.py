@@ -5,7 +5,6 @@ Provides SSE streaming endpoints for answering platform usage questions.
 
 import asyncio
 import json
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -13,10 +12,17 @@ from fastapi.responses import StreamingResponse
 
 from app.auth import CurrentUser
 from app.models import ChatRequest, SupportDoneChunk, TokenChunk
-from app.services.escalation import evaluate_escalation
+from app.services.support_agent import SupportEscalationAgent
 from app.services.support_rag import SupportRagService, get_support_rag_service
 
 router = APIRouter(prefix="/support", tags=["support-chat"])
+
+
+def result_id() -> str:
+    """Create an opaque stream identifier when the browser supplied none."""
+    import uuid
+
+    return f"msg_{uuid.uuid4().hex[:12]}"
 
 
 @router.post("/ai-chat/stream")
@@ -28,16 +34,16 @@ async def support_chat_stream(
 ) -> StreamingResponse:
     """Stream a support answer or a structured human-handoff request over SSE.
 
-    The AI service decides whether escalation is warranted, but the authenticated
-    NestJS gateway remains responsible for creating or reusing the ticket.
+    The LLM chooses the next bounded action; the authenticated NestJS gateway
+    remains responsible for creating or reusing the ticket.
     """
 
-    decision = evaluate_escalation(payload.message, payload.history)
+    decision = await SupportEscalationAgent().decide(payload.message, payload.history)
 
     async def _sse_generator():
         if decision.should_escalate:
             done = SupportDoneChunk(
-                id=f"msg_{uuid.uuid4().hex[:12]}",
+                id=payload.clientRequestId.hex if payload.clientRequestId else result_id(),
                 escalated=True,
                 escalationReason=decision.reason,
                 priority=decision.priority,
