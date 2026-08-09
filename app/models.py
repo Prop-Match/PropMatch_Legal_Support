@@ -65,6 +65,11 @@ class DoneChunk(BaseModel):
     id: str
     declined: bool = False
     escalated: bool = False
+    # When this is true NestJS, not the AI service, performs the authenticated
+    # ticket handoff.  Keep these fields on the terminal event so the gateway
+    # can validate the complete intent before making a state-changing call.
+    escalationReason: str | None = None
+    priority: Literal["NORMAL", "HIGH", "URGENT"] | None = None
     suggestedGuide: list[str] = []
 
 

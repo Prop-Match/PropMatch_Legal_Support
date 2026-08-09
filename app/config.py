@@ -26,15 +26,22 @@ class Settings(BaseSettings):
     internal_service_api_key: str = Field(default="", repr=False, alias="INTERNAL_SERVICE_API_KEY")
     # ITI LLM Credentials
     sbg_api_key: str = Field(default="", repr=False, alias="SBG_API_KEY")
-    llm_api_url: str = Field(default="http://apiaccess.iti.net.eg/api/v1/student/chat", alias="LLM_API_URL")
+    llm_api_url: str = Field(
+        default="http://apiaccess.iti.net.eg/api/v1/student/chat",
+        alias="LLM_API_URL",
+    )
     llm_model_id: str = Field(default="openai.gpt-oss-120b-1:0", alias="LLM_MODEL_ID")
 
     # ChromaDB & Vector Collections
     chroma_host: str = Field(default="localhost", alias="CHROMA_HOST")
     chroma_port: int = Field(default=8000, ge=1, le=65535, alias="CHROMA_PORT")
     chroma_ssl: bool = Field(default=False, alias="CHROMA_SSL")
-    chroma_legal_collection: str = Field(default="egypt_real_estate_laws_v1", alias="CHROMA_LEGAL_COLLECTION")
-    chroma_support_collection: str = Field(default="support_kb_v1", alias="CHROMA_SUPPORT_COLLECTION")
+    chroma_legal_collection: str = Field(
+        default="egypt_real_estate_laws_v1", alias="CHROMA_LEGAL_COLLECTION"
+    )
+    chroma_support_collection: str = Field(
+        default="support_kb_v1", alias="CHROMA_SUPPORT_COLLECTION"
+    )
 
     app_env: str = "development"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
@@ -44,13 +51,6 @@ class Settings(BaseSettings):
 
     llm_max_tokens: int = Field(default=700, ge=100, le=4000)
     llm_timeout_seconds: float = Field(default=90, gt=0)
-
-    # Private NestJS endpoint used by the model-selected support-ticket tool.
-    # This must be reachable from the EC2 Docker network, never from browsers.
-    support_ticket_api_url: str = Field(default="", alias="SUPPORT_TICKET_API_URL")
-    support_ticket_timeout_seconds: float = Field(
-        default=10, gt=0, le=60, alias="SUPPORT_TICKET_TIMEOUT_SECONDS"
-    )
 
     embedding_provider: Literal["iti", "cohere"] = "iti"
     embedding_api_url: str = "http://apiaccess.iti.net.eg/api/v1/student/embed"

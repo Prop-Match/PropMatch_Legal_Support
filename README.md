@@ -151,37 +151,38 @@ agent rejected an off-topic question without presenting it as legal advice.
 
 ### `POST /support/ai-chat/stream`
 
-**Purpose:** Answer PropMatch usage questions or autonomously create a human
-support ticket. The model selects `RESPOND` or `CREATE_SUPPORT_TICKET` from the
-current message and conversation history. For the ticket action, FastAPI calls
-the private NestJS tool endpoint; NestJS authenticates, validates, persists,
-and notifies the admin queue.
+**Purpose:** Answer PropMatch usage questions or request an autonomous human
+support handoff. The model selects `RESPOND` or `CREATE_SUPPORT_TICKET` from
+the current message and conversation history. FastAPI emits the selected action
+in the terminal SSE frame; NestJS authenticates, validates, persists, and
+notifies the admin queue.
 
-**Ownership boundary:** FastAPI may select and invoke the ticket tool, but it
-never accesses PostgreSQL or ticket state directly. NestJS owns
+**Ownership boundary:** FastAPI selects the action but never creates tickets or
+calls a ticket API. NestJS owns
 `SupportTicket`, `SupportMessage`, ticket status transitions, and Socket.IO
 notifications. The browser sends a UUID `clientRequestId`; NestJS persists it
 as an idempotency key, so a retried stream cannot duplicate a ticket.
 
-The terminal `done` frame sets `escalated=true` only after NestJS has created
-or returned the ticket. If the tool is unavailable, the agent does not claim an
-escalation and returns a normal support response.
+For an escalation, FastAPI emits this intent in its terminal `done` frame:
+
+```json
+{
+  "type": "done",
+  "escalated": true,
+  "escalationReason": "سبب التصعيد",
+  "priority": "HIGH"
+}
+```
+
+NestJS replaces that intent with a confirmed `ticketId` only after the ticket
+has been created or reused. If persistence fails, the browser receives
+`escalated=false` and a manual-handoff fallback message.
 
 ### EC2 Docker configuration
 
-On the EC2 host, set these values in the FastAPI service's `.env` before
-restarting Docker Compose:
-
-```dotenv
-# Private or security-group-restricted NestJS URL reachable from this container.
-SUPPORT_TICKET_API_URL=http://<nestjs-private-host>:3001
-# INTERNAL_SERVICE_API_KEY must match the NestJS service. It must not be a
-# browser key.
-SUPPORT_TICKET_TIMEOUT_SECONDS=10
-```
-
-Set `INTERNAL_SERVICE_API_KEY` to the same secret in the NestJS service
-environment. Then rebuild/restart the FastAPI service:
+Set `INTERNAL_SERVICE_API_KEY` in FastAPI to the same value configured as
+`LEGAL_SUPPORT_INTERNAL_API_KEY` in NestJS. It is a server-to-server secret,
+never a browser key. Then rebuild/restart the FastAPI service:
 
 ```bash
 docker compose up -d --build api
