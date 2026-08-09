@@ -8,12 +8,19 @@ import asyncio
 import json
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.auth import CurrentUser
+from app.config import get_settings
 from app.models import ChatRequest, DoneChunk, TokenChunk
-from app.services.escalation import evaluate_escalation
+from app.services.support_agent import (
+    AgentDecision,
+    SupportEscalationAgent,
+    SupportTicketTool,
+    new_agent_run_id,
+)
 from app.services.support_rag import SupportRagService, get_support_rag_service
 
 router = APIRouter(prefix="/support", tags=["support-chat"])
@@ -28,19 +35,39 @@ async def support_chat_stream(
 ) -> StreamingResponse:
     """Stream token-by-token support answer frames over Server-Sent Events (SSE).
 
-    Evaluates multi-factor escalation rules first. If human escalation is required,
-    yields an initial `escalate` chunk before streaming answer tokens.
+    The model chooses whether to answer or call the private
+    create-support-ticket tool. NestJS validates and persists any ticket.
     """
-    escalation = evaluate_escalation(payload.message, payload.history)
+    decision = await SupportEscalationAgent().decide(payload.message, payload.history)
+    ticket_id: str | None = None
+    if decision.should_escalate:
+        try:
+            run_id = (
+                str(payload.clientRequestId)
+                if payload.clientRequestId
+                else new_agent_run_id()
+            )
+            ticket = await SupportTicketTool(get_settings()).create(
+                run_id=run_id,
+                user_id=_user["sub"],
+                message=payload.message,
+                reason=decision.reason,
+                priority=decision.priority,
+            )
+            ticket_id = ticket.ticket_id
+        except (httpx.HTTPError, RuntimeError):
+            # Never claim that an escalation completed when the tool failed.
+            decision = AgentDecision(action="RESPOND")
 
     async def _sse_generator():
-        # 1. Yield escalation recommendation chunk if required
-        if escalation.get("shouldEscalate"):
+        # 1. Yield the completed model-selected tool call, if any.
+        if ticket_id:
             escalate_chunk = {
                 "type": "escalate",
                 "shouldEscalate": True,
-                "reason": escalation.get("reason"),
-                "priority": escalation.get("priority"),
+                "reason": decision.reason,
+                "priority": decision.priority,
+                "ticketId": ticket_id,
             }
             yield f"data: {json.dumps(escalate_chunk, ensure_ascii=False)}\n\n"
 
@@ -57,17 +84,13 @@ async def support_chat_stream(
         content_lower = result.content.lower()
         if any(w in content_lower for w in ["kyc", "توثيق", "الهوية"]):
             suggested_guides.append("KYC_GUIDE")
-        if any(
-            w in content_lower for w in ["عقار", "property", "إضافة عقار", "اضافة عقار"]
-        ):
+        if any(w in content_lower for w in ["عقار", "property", "إضافة عقار", "اضافة عقار"]):
             suggested_guides.append("PROPERTY_GUIDE")
-        if any(
-            w in content_lower for w in ["طلب سكن", "tenant request", "طلبات السكن"]
-        ):
+        if any(w in content_lower for w in ["طلب سكن", "tenant request", "طلبات السكن"]):
             suggested_guides.append("REQUEST_GUIDE")
         done = DoneChunk(
             id=result.id,
-            escalated=escalation.get("shouldEscalate", False),
+            escalated=ticket_id is not None,
             suggestedGuide=suggested_guides,
         )
         yield f"data: {json.dumps(done.model_dump(), ensure_ascii=False)}\n\n"
