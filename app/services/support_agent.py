@@ -7,6 +7,7 @@ executes the state-changing ticket tool with the authenticated user context.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,15 +54,21 @@ class SupportEscalationAgent:
                 system_prompt=ESCALATION_SYSTEM_PROMPT,
                 prompt=f"Current message:\n{message}\n\nConversation history:\n{history_json}",
             )
-            return parse_agent_decision(raw)
+            decision = parse_agent_decision(raw)
         except (LlmProviderError, ValueError, TypeError, json.JSONDecodeError):
             # A malformed or unavailable model may answer through RAG, but it
             # must never create a ticket by accident.
-            return AgentDecision(action="RESPOND")
+            decision = AgentDecision(action="RESPOND")
+
+        # The model is the normal decision maker. These narrow safety rules
+        # prevent a valid explicit handoff, security/payment emergency, or a
+        # repeatedly unresolved conversation from being lost because a model
+        # response is malformed or inconsistent on a later retry.
+        return decision if decision.should_escalate else escalation_guardrail(message, history)
 
 
 def parse_agent_decision(raw: str) -> AgentDecision:
-    value: Any = json.loads(raw.strip())
+    value: Any = json.loads(extract_json_object(raw))
     if not isinstance(value, dict):
         raise ValueError("Agent decision must be an object")
     action = value.get("action")
@@ -76,3 +83,69 @@ def parse_agent_decision(raw: str) -> AgentDecision:
     if action == "CREATE_SUPPORT_TICKET" and not reason.strip():
         raise ValueError("Escalation requires a reason")
     return AgentDecision(action=action, reason=reason.strip(), priority=priority)
+
+
+def extract_json_object(raw: str) -> str:
+    """Accept the JSON object even when a provider wraps it in Markdown."""
+    candidate = raw.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate).strip()
+    if candidate.startswith("{") and candidate.endswith("}"):
+        return candidate
+    match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+    if not match:
+        raise ValueError("Agent decision contains no JSON object")
+    return match.group(0)
+
+
+def escalation_guardrail(
+    message: str, history: list[dict[str, str]] | None
+) -> AgentDecision:
+    """Guarantee human handoff for explicitly high-risk support cases."""
+    normalized = " ".join(message.lower().split())
+    if any(
+        phrase in normalized
+        for phrase in (
+            "تحدث مع موظف",
+            "التحدث مع موظف",
+            "تحدث مع شخص",
+            "التحدث مع شخص",
+            "موظف دعم",
+            "دعم بشري",
+            "human agent",
+            "speak to a person",
+            "talk to a human",
+        )
+    ):
+        return AgentDecision(
+            action="CREATE_SUPPORT_TICKET",
+            reason="طلب المستخدم التحدث مع موظف دعم",
+            priority="HIGH",
+        )
+    if any(
+        phrase in normalized
+        for phrase in (
+            "سرقة",
+            "احتيال",
+            "اختراق",
+            "خصم بدون علم",
+            "عملية غير مصرح",
+            "unauthorized payment",
+            "account hacked",
+        )
+    ):
+        return AgentDecision(
+            action="CREATE_SUPPORT_TICKET",
+            reason="حالة دفع أو أمان تحتاج مراجعة بشرية عاجلة",
+            priority="URGENT",
+        )
+    user_turns = sum(
+        1 for item in history or [] if str(item.get("role", "")).lower() == "user"
+    )
+    if user_turns >= 4:
+        return AgentDecision(
+            action="CREATE_SUPPORT_TICKET",
+            reason="تكررت محاولات المستخدم دون الوصول إلى حل",
+            priority="NORMAL",
+        )
+    return AgentDecision(action="RESPOND")
