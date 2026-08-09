@@ -151,34 +151,12 @@ agent rejected an off-topic question without presenting it as legal advice.
 
 ### `POST /support/ai-chat/stream`
 
-**Purpose:** Answer PropMatch usage questions or autonomously create a human
-support ticket. The model selects `RESPOND` or `CREATE_SUPPORT_TICKET` from the
-current message and conversation history. For the ticket action, FastAPI calls
-the private NestJS tool endpoint; NestJS authenticates, validates, persists,
-and notifies the admin queue.
+**Purpose:** Answer PropMatch usage questions without performing state-changing
+actions. Human escalation is always initiated by the user in the frontend and
+handled by the authenticated NestJS customer-support API.
 
-**Ownership boundary:** FastAPI may select and invoke the ticket tool, but it
-never accesses PostgreSQL or ticket state directly. NestJS owns
-`SupportTicket`, `SupportMessage`, ticket status transitions, and Socket.IO
-notifications. The browser sends a UUID `clientRequestId`; NestJS persists it
-as an idempotency key, so a retried stream cannot duplicate a ticket.
-
-The terminal `done` frame sets `escalated=true` only after NestJS has created
-or returned the ticket. If the tool is unavailable, the agent does not claim an
-escalation and returns a normal support response.
-
-### EC2 Docker configuration
-
-On the EC2 host, set these values in the FastAPI service's `.env` before
-restarting Docker Compose:
-
-```dotenv
-# Private or security-group-restricted NestJS URL reachable from this container.
-SUPPORT_TICKET_API_URL=http://<nestjs-private-host>:3001
-# INTERNAL_SERVICE_API_KEY must match the NestJS service. It must not be a
-# browser key.
-SUPPORT_TICKET_TIMEOUT_SECONDS=10
-```
+The terminal `done` frame always sets `escalated=false`; the assistant cannot
+create or modify a support ticket.
 
 Set `INTERNAL_SERVICE_API_KEY` to the same secret in the NestJS service
 environment. Then rebuild/restart the FastAPI service:
@@ -219,7 +197,6 @@ Common statuses are `400` for invalid input, `401` for an invalid internal key,
 | `app/ingest.py` | Loads the law corpus and idempotently upserts chunks into ChromaDB. |
 | `app/routers/support_router.py` | Contains the in-progress support SSE endpoint. |
 | `app/services/support_rag.py` | Contains the in-progress support retrieval and answer orchestration. |
-| `app/services/escalation.py` | Produces advisory handoff decisions for NestJS to validate and execute. |
 
 ---
 
