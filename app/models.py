@@ -67,6 +67,14 @@ class DoneChunk(BaseModel):
     suggestedGuide: list[str] = []
 
 
+class SupportDoneChunk(DoneChunk):
+    """Internal support-stream result consumed by the authenticated gateway."""
+
+    escalationReason: str | None = None
+    priority: Literal["NORMAL", "HIGH", "URGENT"] | None = None
+    ticketId: str | None = None
+
+
 class HealthResponse(BaseModel):
     """Liveness/readiness state consumed by operators and containers."""
 

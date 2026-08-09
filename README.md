@@ -2,7 +2,7 @@
 
 Standalone FastAPI retrieval-augmented generation (RAG) microservice for the PropMatch platform, hosting both the **Legal Chatbot** and the **Customer Support AI Assistant**.
 
-It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider. Its support agent decides whether to answer from the knowledge base or call NestJS's protected ticket-creation tool.
+It answers Arabic legal questions regarding Egyptian real-estate law using `laws/`, answers platform usage questions using `docs/support_faqs/`, retrieves evidence from a Dockerized ChromaDB vector store, and streams answers using the shared ITI LLM provider. Its support policy either answers from the knowledge base or emits a structured handoff intent for the authenticated NestJS gateway to execute.
 
 ---
 
@@ -10,7 +10,7 @@ It answers Arabic legal questions regarding Egyptian real-estate law using `laws
 
 - **Legal Chat Stream**: `POST /legal-chat/stream` (SSE tokens + legal disclaimer enforcement).
 - **Legal Chat Buffered**: `POST /legal-chat` (buffered JSON answer with cited law sources).
-- **Support Chat Stream**: `POST /support/ai-chat/stream` (SSE, model-directed answer or human handoff).
+- **Support Chat Stream**: `POST /support/ai-chat/stream` (SSE, grounded answer or policy-directed human handoff).
 - **Health Probes**: `GET /health/live` and `GET /health/ready`.
 - **Internal Key Security**: Validates `X-Internal-Service-Key` header sent by NestJS BFF.
 - **Dedicated Vector Collections**:
@@ -151,12 +151,15 @@ agent rejected an off-topic question without presenting it as legal advice.
 
 ### `POST /support/ai-chat/stream`
 
-**Purpose:** Answer PropMatch usage questions without performing state-changing
-actions. Human escalation is always initiated by the user in the frontend and
-handled by the authenticated NestJS customer-support API.
+**Purpose:** Answer PropMatch usage questions and request a human handoff when
+the user explicitly asks for an employee, reports a payment/security emergency,
+or repeatedly fails to resolve the same issue.
 
-The terminal `done` frame always sets `escalated=false`; the assistant cannot
-create or modify a support ticket.
+The AI service emits only a structured escalation intent. The authenticated
+NestJS gateway creates or reuses the `SupportTicket`, then rewrites the terminal
+`done` frame with `escalated=true` and the persisted `ticketId`. This keeps all
+database authority and user identity inside NestJS and prevents a success
+message from being shown before persistence succeeds.
 
 Set `INTERNAL_SERVICE_API_KEY` to the same secret in the NestJS service
 environment. Then rebuild/restart the FastAPI service:
