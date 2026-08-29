@@ -1,10 +1,17 @@
-"""ChromaDB adapter used to ingest and retrieve RAG passages for legal and support domains."""
+"""ChromaDB adapter used to ingest and retrieve RAG passages for legal and support domains.
+
+Supports two modes:
+  1. **Client-server** (docker-compose): connects to an external ChromaDB via
+     ``CHROMA_HOST`` / ``CHROMA_PORT``.
+  2. **Embedded** (Render / serverless): when ``CHROMA_HOST`` is empty, falls
+     back to ``chromadb.PersistentClient`` at ``CHROMA_PERSIST_DIR``.
+"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
+import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -23,24 +30,41 @@ class RetrievedPassage:
     distance: float
 
 
-class LegalVectorStore:
-    """LangChain Chroma adapter backed by the external Chroma Docker service."""
-
-    def __init__(self, settings: Settings, embeddings: Embeddings, collection_name: str | None = None) -> None:
-        self.settings = settings
-        self.embeddings = embeddings
-        target_collection = collection_name or settings.chroma_legal_collection
-        self.store = Chroma(
-            collection_name=target_collection,
-            embedding_function=embeddings,
+def _build_chroma_client(settings: Settings) -> chromadb.ClientAPI:
+    """Return a client-server or embedded Chroma client based on config."""
+    if settings.chroma_host:
+        # Docker Compose / external ChromaDB server
+        return chromadb.HttpClient(
             host=settings.chroma_host,
             port=settings.chroma_port,
             ssl=settings.chroma_ssl,
+        )
+    # Embedded persistent mode (Render free tier / serverless)
+    return chromadb.PersistentClient(path=settings.chroma_persist_dir)
+
+
+class LegalVectorStore:
+    """LangChain Chroma adapter supporting both client-server and embedded modes."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        embeddings: Embeddings,
+        collection_name: str | None = None,
+    ) -> None:
+        self.settings = settings
+        self.embeddings = embeddings
+        target_collection = collection_name or settings.chroma_legal_collection
+        client = _build_chroma_client(settings)
+        self.store = Chroma(
+            client=client,
+            collection_name=target_collection,
+            embedding_function=embeddings,
             collection_metadata={"hnsw:space": "cosine", "corpus": "propmatch-rag"},
         )
 
     def heartbeat(self) -> int:
-        """Check whether the external ChromaDB server responds."""
+        """Check whether ChromaDB responds (client-server) or exists (embedded)."""
         return self.store._client.heartbeat()
 
     def count(self) -> int:

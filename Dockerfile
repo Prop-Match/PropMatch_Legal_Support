@@ -10,14 +10,16 @@ COPY pyproject.toml ./
 COPY app ./app
 COPY laws ./laws
 COPY docs ./docs
+COPY entrypoint.sh ./entrypoint.sh
 
 RUN pip install --upgrade pip && pip install .
 
 RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /service
+    && mkdir -p /tmp/chroma_data \
+    && chown -R appuser:appuser /service /tmp/chroma_data
 
 USER appuser
 
 EXPOSE 8001
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+ENTRYPOINT ["./entrypoint.sh"]

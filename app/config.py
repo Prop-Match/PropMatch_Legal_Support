@@ -33,9 +33,10 @@ class Settings(BaseSettings):
     llm_model_id: str = Field(default="openai.gpt-oss-120b-1:0", alias="LLM_MODEL_ID")
 
     # ChromaDB & Vector Collections
-    chroma_host: str = Field(default="localhost", alias="CHROMA_HOST")
+    chroma_host: str = Field(default="", alias="CHROMA_HOST")
     chroma_port: int = Field(default=8000, ge=1, le=65535, alias="CHROMA_PORT")
     chroma_ssl: bool = Field(default=False, alias="CHROMA_SSL")
+    chroma_persist_dir: str = Field(default="/tmp/chroma_data", alias="CHROMA_PERSIST_DIR")
     chroma_legal_collection: str = Field(
         default="egypt_real_estate_laws_v1", alias="CHROMA_LEGAL_COLLECTION"
     )
