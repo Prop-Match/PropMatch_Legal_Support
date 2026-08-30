@@ -53,7 +53,7 @@ async def legal_chat_stream(
                 yield f"data: {json.dumps(chunk.model_dump(), ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
         done = DoneChunk(id=result.id, declined=result.declined)
-        yield f"data: {json.dumps(done.model_dump(), ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(done.model_dump(exclude_none=True), ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         _sse_generator(),
