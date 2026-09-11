@@ -8,4 +8,4 @@ __pycache__/
 dist/
 build/
 
-.vscode
+.vscode.env.development

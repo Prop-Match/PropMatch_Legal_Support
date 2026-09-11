@@ -30,6 +30,8 @@ services:
       - .:/service
     env_file:
       - .env
+      - path: .env.development
+        required: false
     environment:
       CHROMA_HOST: chroma
       CHROMA_PORT: "8000"
